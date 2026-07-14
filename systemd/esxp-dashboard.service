@@ -1,0 +1,22 @@
+[Unit]
+Description=ESXP Network Services Dashboard (Kea DHCP management web UI)
+Documentation=https://github.com/YOUR-ORG/YOUR-REPO
+After=network-online.target kea-ctrl-agent.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as root so the backend can control the Kea systemd units (start/stop/
+# restart/reload) on this single internal server. See README "Security notes".
+User=root
+WorkingDirectory=/opt/esxp-network-services/backend
+EnvironmentFile=/etc/esxp-network-services/.env
+ExecStart=/opt/esxp-network-services/.venv/bin/python -m app
+Restart=on-failure
+RestartSec=3
+# Modest hardening while still allowing systemctl + config writes.
+NoNewPrivileges=false
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
