@@ -74,12 +74,12 @@
     pillV4 = h("span", null, statusPill("DHCPv4", false));
     pillV6 = h("span", null, statusPill("DHCPv6", false));
 
-    var avatar = h("div", { class: "avatar" }, U.initials(App.user.username));
+    var avatar = h("div", { class: "avatar", title: App.user.username }, U.initials(App.user.username));
     var topbar = h("div", { class: "topbar" },
       h("img", { class: "logo", src: "/assets/logo.png", alt: "Schneider Electric" }),
       h("div", { class: "spacer" }),
       h("div", { class: "status-group" }, pillV4, pillV6),
-      h("div", { class: "user-chip" }, avatar, h("span", null, App.user.username),
+      h("div", { class: "user-chip" }, avatar,
         h("button", { class: "btn btn-outline btn-sm", style: "margin-left:12px", onClick: logout }, "Logout")));
 
     sidebarEl = h("nav", { class: "sidebar" });

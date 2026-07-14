@@ -39,8 +39,8 @@
         h("div", { class: "login-card" },
           h("div", { class: "login-brand" },
             h("img", { src: "/assets/logo.png", alt: "Schneider Electric" }),
-            h("h2", { class: "login-title" }, "Network Services"),
-            h("div", { class: "subtitle" }, "Sign in to manage your DHCP infrastructure")),
+            h("h2", { class: "login-title" }, "ESXP Network Services"),
+            h("div", { class: "subtitle" }, "DHCP Management Dashboard")),
           h("div", { class: "login-divider" }),
           form)));
     userInput.focus();
