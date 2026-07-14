@@ -36,19 +36,12 @@
       U.clear(p.pill); p.pill.appendChild(svcPill(running));
       p.card.classList.toggle("accent-up", running);
       p.card.classList.toggle("accent-down", !running);
-      if (p.statsWrap) renderStats(which, p.statsWrap);
+      if (p.uptime) updateUptime(which, p.uptime);
     }
 
-    function renderStats(which, wrap) {
-      U.clear(wrap);
+    function updateUptime(which, span) {
       var info = state.status.kea && state.status.kea[which];
-      if (!info) {
-        wrap.appendChild(h("div", { class: "muted", style: "font-size:12.5px;margin-bottom:10px" },
-          "No status data yet."));
-        return;
-      }
-      wrap.appendChild(h("div", { class: "kv" }, h("span", null, "Uptime"),
-        h("span", null, info.uptime != null ? U.fmtDuration(info.uptime) : "—")));
+      span.textContent = info && info.uptime != null ? "· up " + U.fmtDuration(info.uptime) : "";
     }
 
     function serviceAction(which, action, btn) {
@@ -66,24 +59,29 @@
     function servicePanel(which, title, opts) {
       opts = opts || {};
       var pill = h("span");
-      var statsWrap = opts.noStats ? null : h("div");
+      var uptime = opts.noStats ? null : h("span", { class: "svc-uptime" });
       var card = h("div", { class: "card" });
-      panels[which] = { pill: pill, card: card, statsWrap: statsWrap };
+      panels[which] = { pill: pill, card: card, uptime: uptime };
 
       function b(action, cls, text) {
         var btn = h("button", { class: "btn " + cls + " btn-sm" }, text);
         btn.onclick = function () { serviceAction(which, action, btn); };
         return btn;
       }
-      var controls = opts.singleAction
-        ? [b(opts.singleAction, "btn-outline", opts.singleLabel)]
-        : [b("start", "btn-primary", "Start"), b("stop", "btn-outline", "Stop"),
-           b("restart", "btn-outline", "Restart"), b("reload", "btn-outline", "Reload")];
 
-      card.appendChild(h("div", { class: "card-head" }, h("h3", null, title), h("div", { class: "actions" }, pill)));
-      card.appendChild(h("div", { class: "card-body" },
-        statsWrap,
-        h("div", { class: "svc-controls" }, controls)));
+      var titleWrap = h("div", { class: "svc-title" }, h("h3", null, title), uptime);
+
+      if (opts.singleAction) {
+        card.appendChild(h("div", { class: "card-head" }, titleWrap, h("div", { class: "actions" }, pill)));
+        card.appendChild(h("div", { class: "card-body" },
+          h("div", { class: "svc-controls single" }, b(opts.singleAction, "btn-outline", opts.singleLabel))));
+      } else {
+        var controls = h("div", { class: "svc-controls" },
+          h("div", { class: "svc-group" }, b("start", "btn-primary", "Start"), b("stop", "btn-outline", "Stop")),
+          h("div", { class: "svc-group" }, b("restart", "btn-outline", "Restart"), b("reload", "btn-outline", "Reload")));
+        card.appendChild(h("div", { class: "card-head" }, titleWrap, h("div", { class: "actions" }, pill)));
+        card.appendChild(h("div", { class: "card-body" }, controls));
+      }
 
       updatePanel(which);
       return card;

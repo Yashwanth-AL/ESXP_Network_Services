@@ -56,18 +56,27 @@ h1, h2, h3, h4 { margin: 0 0 .5rem; font-weight: 600; }
 .login-card {
   background: var(--surface);
   width: 100%;
-  max-width: 380px;
-  border-radius: 12px;
+  max-width: 400px;
+  border-radius: 14px;
   box-shadow: var(--shadow-lg);
-  padding: 34px 30px 30px;
+  padding: 40px 36px 34px;
   border-top: 4px solid var(--se-green);
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
 }
-.login-card img { height: 56px; margin-bottom: 6px; border-radius: 6px; }
-.login-card .subtitle { color: var(--text-muted); margin-bottom: 22px; font-size: 13px; }
+.login-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.login-card img { height: 46px; display: block; }
+.login-title { font-size: 19px; margin: 16px 0 3px; color: var(--text); }
+.login-card .subtitle { color: var(--text-muted); margin: 0 0 26px; font-size: 13px; }
+.login-divider { width: 100%; height: 1px; background: var(--border); margin-bottom: 26px; }
+.login-card form { width: 100%; text-align: left; }
 
 /* --- App shell -------------------------------------------------------------- */
 .topbar {
@@ -276,12 +285,18 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 .panel-stack { display: flex; flex-direction: column; gap: 18px; }
 .card.accent-up { border-top: 3px solid var(--se-green); }
 .card.accent-down { border-top: 3px solid var(--danger); }
+.svc-title { display: flex; align-items: baseline; gap: 8px; }
+.svc-uptime { font-size: 12.5px; font-weight: 400; color: var(--text-muted); }
 .svc-controls {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
-  gap: 10px;
+  display: flex;
+  align-items: center;
+  gap: 26px;
   margin-top: 14px;
 }
+.svc-group { display: flex; gap: 10px; flex: 1; }
+.svc-group .btn { flex: 1; }
+.svc-controls.single { justify-content: flex-end; margin-top: 4px; }
+.svc-controls.single .btn { min-width: 120px; }
 .kv { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
 .kv:last-child { border-bottom: none; margin-bottom: 6px; }
 .log-box {

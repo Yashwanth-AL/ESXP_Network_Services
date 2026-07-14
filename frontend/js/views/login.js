@@ -37,8 +37,11 @@
     app.appendChild(
       h("div", { class: "login-wrap" },
         h("div", { class: "login-card" },
-          h("img", { src: "/assets/logo.png", alt: "Schneider Electric" }),
-          h("div", { class: "subtitle" }, "Network Services — DHCP Management"),
+          h("div", { class: "login-brand" },
+            h("img", { src: "/assets/logo.png", alt: "Schneider Electric" }),
+            h("h2", { class: "login-title" }, "Network Services"),
+            h("div", { class: "subtitle" }, "Sign in to manage your DHCP infrastructure")),
+          h("div", { class: "login-divider" }),
           form)));
     userInput.focus();
   };
