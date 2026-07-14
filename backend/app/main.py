@@ -19,7 +19,7 @@ from .database import init_db
 from .kea_client import KeaError
 from .services import ServiceError
 from .validation import ValidationError
-from .routers import auth, config as config_router, dhcp4, dhcp6, leases, system
+from .routers import auth, dhcp4, dhcp6, leases, system
 
 logger = logging.getLogger("esxp")
 
@@ -66,7 +66,6 @@ app.include_router(auth.router)
 app.include_router(dhcp4.router)
 app.include_router(dhcp6.router)
 app.include_router(leases.router)
-app.include_router(config_router.router)
 app.include_router(system.router)
 
 

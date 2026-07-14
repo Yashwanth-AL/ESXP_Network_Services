@@ -38,6 +38,31 @@ def _validate_subnet_payload(body: Subnet4Request) -> dict:
     return {"cidr": cidr, "gateway": gateway, "dns": dns}
 
 
+async def _build_candidate(body: Subnet4Request, subnet_id: int | None):
+    """Fetch the running config and apply ``body`` to it in-memory, without
+    calling Kea yet. Shared by the real create/update endpoints and the
+    verify (dry-run) endpoints so a "valid" verdict always reflects exactly
+    what would be applied.
+    """
+    v = _validate_subnet_payload(body)
+    config = await kea_client.config_get(SERVICE)
+    subnets = kea_config.subnet_list(config, SERVICE)
+    for existing in subnets:
+        if existing.get("id") != subnet_id and existing.get("subnet") == v["cidr"]:
+            raise HTTPException(status_code=409, detail=f"Subnet {v['cidr']} already exists")
+    if subnet_id is None:
+        subnet = {"id": kea_config.next_subnet_id(config, SERVICE)}
+        subnets.append(subnet)
+    else:
+        subnet = _require_subnet(config, subnet_id)
+    kea_config.write_subnet4(
+        subnet, cidr=v["cidr"], pool_start=body.pool_start, pool_end=body.pool_end,
+        gateway=v["gateway"], dns_servers=v["dns"], valid_lifetime=body.valid_lifetime,
+        renew_timer=body.renew_timer, rebind_timer=body.rebind_timer,
+    )
+    return config, subnet, v
+
+
 # --- subnets -----------------------------------------------------------------
 
 @router.get("/subnets")
@@ -48,18 +73,7 @@ async def list_subnets(user: str = Depends(current_user)):
 
 @router.post("/subnets", status_code=201)
 async def create_subnet(body: Subnet4Request, user: str = Depends(current_user)):
-    v = _validate_subnet_payload(body)
-    config = await kea_client.config_get(SERVICE)
-    for existing in kea_config.subnet_list(config, SERVICE):
-        if existing.get("subnet") == v["cidr"]:
-            raise HTTPException(status_code=409, detail=f"Subnet {v['cidr']} already exists")
-    subnet = {"id": kea_config.next_subnet_id(config, SERVICE)}
-    kea_config.write_subnet4(
-        subnet, cidr=v["cidr"], pool_start=body.pool_start, pool_end=body.pool_end,
-        gateway=v["gateway"], dns_servers=v["dns"], valid_lifetime=body.valid_lifetime,
-        renew_timer=body.renew_timer, rebind_timer=body.rebind_timer,
-    )
-    kea_config.subnet_list(config, SERVICE).append(subnet)
+    config, subnet, v = await _build_candidate(body, None)
     await kea_client.apply_config(SERVICE, config)
     audit.record(user, "config", "dhcp4.subnet.create", "success", v["cidr"])
     return kea_config.subnet4_to_api(subnet)
@@ -67,20 +81,37 @@ async def create_subnet(body: Subnet4Request, user: str = Depends(current_user))
 
 @router.put("/subnets/{subnet_id}")
 async def update_subnet(subnet_id: int, body: Subnet4Request, user: str = Depends(current_user)):
-    v = _validate_subnet_payload(body)
-    config = await kea_client.config_get(SERVICE)
-    subnet = _require_subnet(config, subnet_id)
-    for existing in kea_config.subnet_list(config, SERVICE):
-        if existing.get("id") != subnet_id and existing.get("subnet") == v["cidr"]:
-            raise HTTPException(status_code=409, detail=f"Subnet {v['cidr']} already exists")
-    kea_config.write_subnet4(
-        subnet, cidr=v["cidr"], pool_start=body.pool_start, pool_end=body.pool_end,
-        gateway=v["gateway"], dns_servers=v["dns"], valid_lifetime=body.valid_lifetime,
-        renew_timer=body.renew_timer, rebind_timer=body.rebind_timer,
-    )
+    config, subnet, v = await _build_candidate(body, subnet_id)
     await kea_client.apply_config(SERVICE, config)
     audit.record(user, "config", "dhcp4.subnet.update", "success", v["cidr"])
     return kea_config.subnet4_to_api(subnet)
+
+
+@router.post("/subnets/verify")
+async def verify_new_subnet(body: Subnet4Request, user: str = Depends(current_user)):
+    """Dry-run: validate a candidate NEW subnet against Kea without applying it."""
+    config, _subnet, v = await _build_candidate(body, None)
+    try:
+        await kea_client.config_test(SERVICE, config)
+    except kea_client.KeaError as exc:
+        audit.record(user, "config", "dhcp4.subnet.verify", "failure", exc.message)
+        return {"ok": False, "message": exc.message}
+    audit.record(user, "config", "dhcp4.subnet.verify", "success", v["cidr"])
+    return {"ok": True, "message": "Configuration is valid."}
+
+
+@router.post("/subnets/{subnet_id}/verify")
+async def verify_existing_subnet(subnet_id: int, body: Subnet4Request,
+                                 user: str = Depends(current_user)):
+    """Dry-run: validate a candidate EDIT to an existing subnet, without applying it."""
+    config, _subnet, v = await _build_candidate(body, subnet_id)
+    try:
+        await kea_client.config_test(SERVICE, config)
+    except kea_client.KeaError as exc:
+        audit.record(user, "config", "dhcp4.subnet.verify", "failure", exc.message)
+        return {"ok": False, "message": exc.message}
+    audit.record(user, "config", "dhcp4.subnet.verify", "success", v["cidr"])
+    return {"ok": True, "message": "Configuration is valid."}
 
 
 @router.delete("/subnets/{subnet_id}")

@@ -48,21 +48,6 @@
     return Math.round(n * factor);
   }
 
-  // Compact human display for read-only table cells, e.g. 4000 -> "1h 6m".
-  function formatDuration(totalSeconds) {
-    var s = Number(totalSeconds) || 0;
-    if (s <= 0) return "0s";
-    var d = Math.floor(s / 86400); s -= d * 86400;
-    var hh = Math.floor(s / 3600); s -= hh * 3600;
-    var m = Math.floor(s / 60); s -= m * 60;
-    var parts = [];
-    if (d) parts.push(d + "d");
-    if (hh) parts.push(hh + "h");
-    if (m) parts.push(m + "m");
-    if (s || !parts.length) parts.push(s + "s");
-    return parts.slice(0, 2).join(" ");
-  }
-
   // A "field" whose control is [number amount] + [unit select], returning the
   // total in seconds via getSeconds(). Drop-in alongside field() in a form-grid.
   function durationField(label, seconds, opts) {
@@ -176,11 +161,11 @@
         var cells = state.version === 4
           ? [h("td", { class: "mono subnet-cidr" }, s.subnet), h("td", null, pool),
              h("td", null, s.gateway || "—"), h("td", null, dns),
-             h("td", null, formatDuration(s.valid_lifetime)),
+             h("td", null, U.fmtDuration(s.valid_lifetime)),
              h("td", null, String(s.reservation_count || 0)), h("td", null, actions)]
           : [h("td", { class: "mono subnet-cidr" }, s.subnet), h("td", null, pool),
              h("td", null, dns),
-             h("td", null, formatDuration(s.preferred_lifetime) + " / " + formatDuration(s.valid_lifetime)),
+             h("td", null, U.fmtDuration(s.preferred_lifetime) + " / " + U.fmtDuration(s.valid_lifetime)),
              h("td", null, String(s.reservation_count || 0)), h("td", null, actions)];
 
         listBody.appendChild(h("tr", {
@@ -224,10 +209,21 @@
       if (!isNew) renderReservations();
     }
 
-    function saveBar(onSave, isNew, onDelete) {
+    // statusWrap shows the outcome of Verify (and of a failed/succeeded Save)
+    // right next to the buttons that triggered it.
+    function showStatus(statusWrap, ok, message) {
+      U.clear(statusWrap);
+      if (!message) return;
+      statusWrap.appendChild(h("div", { class: "banner " + (ok ? "success" : "error") },
+        h("strong", null, ok ? "Valid" : "Invalid"), h("span", null, message)));
+    }
+
+    function saveBar(onVerify, onSave, isNew, onDelete) {
+      var verifyBtn = h("button", { class: "btn btn-outline" }, "Verify");
+      verifyBtn.addEventListener("click", function () { onVerify(verifyBtn); });
       var saveBtn = h("button", { class: "btn btn-primary" }, isNew ? "Create subnet" : "Save changes");
       saveBtn.addEventListener("click", function () { onSave(saveBtn); });
-      var children = [saveBtn];
+      var children = [verifyBtn, saveBtn];
       if (!isNew) {
         children.push(h("button", { class: "btn btn-danger btn-outline", onClick: function () { onDelete(); } }, "Delete subnet"));
       }
@@ -247,6 +243,7 @@
       var renewD = durationField("Renew timer", s.renew_timer != null ? s.renew_timer : 1000);
       var rebindD = durationField("Rebind timer", s.rebind_timer != null ? s.rebind_timer : 2000);
       var errEl = h("div", { class: "err-text" });
+      var statusWrap = h("div");
 
       function read() {
         return {
@@ -273,8 +270,11 @@
           field("Default gateway", gateway, { hint: "Optional (routers option)" }),
           field("DNS servers", dns, { hint: "Comma-separated" }),
           validD.el, renewD.el, rebindD.el),
-        errEl,
-        saveBar(function (btn) { submitSubnet(read, validate, errEl, btn); }, isNew, deleteSubnet));
+        errEl, statusWrap,
+        saveBar(
+          function (btn) { verifySubnet(read, validate, errEl, statusWrap, btn); },
+          function (btn) { submitSubnet(read, validate, errEl, statusWrap, btn); },
+          isNew, deleteSubnet));
       return { el: el };
     }
 
@@ -289,6 +289,7 @@
       var renewD = durationField("Renew timer", s.renew_timer != null ? s.renew_timer : 1000);
       var rebindD = durationField("Rebind timer", s.rebind_timer != null ? s.rebind_timer : 2000);
       var errEl = h("div", { class: "err-text" });
+      var statusWrap = h("div");
 
       function read() {
         return {
@@ -315,13 +316,33 @@
           field("Pool end", poolEnd, { req: true }),
           field("DNS servers", dns, { hint: "Comma-separated", full: true }),
           prefD.el, validD.el, renewD.el, rebindD.el),
-        errEl,
-        saveBar(function (btn) { submitSubnet(read, validate, errEl, btn); }, isNew, deleteSubnet));
+        errEl, statusWrap,
+        saveBar(
+          function (btn) { verifySubnet(read, validate, errEl, statusWrap, btn); },
+          function (btn) { submitSubnet(read, validate, errEl, statusWrap, btn); },
+          isNew, deleteSubnet));
       return { el: el };
     }
 
-    function submitSubnet(read, validate, errEl, btn) {
-      errEl.textContent = "";
+    function verifySubnet(read, validate, errEl, statusWrap, btn) {
+      errEl.textContent = ""; U.clear(statusWrap);
+      var payload = read();
+      var err = validate(payload);
+      if (err) { errEl.textContent = err; return; }
+      var isNew = state.mode === "new";
+      btn.disabled = true; var label = btn.textContent; btn.innerHTML = '<span class="spin spin-dark"></span>';
+      var path = base(state.version) + "/subnets" + (isNew ? "/verify" : "/" + state.selectedId + "/verify");
+      api.post(path, payload).then(function (res) {
+        showStatus(statusWrap, res.ok, res.message);
+        if (!res.ok) window.toast.error(res.message, "Validation failed");
+      }).catch(function (e) {
+        showStatus(statusWrap, false, e.message);
+        window.toast.error(e.message, "DHCPv" + state.version);
+      }).then(function () { btn.disabled = false; btn.textContent = label; });
+    }
+
+    function submitSubnet(read, validate, errEl, statusWrap, btn) {
+      errEl.textContent = ""; U.clear(statusWrap);
       var payload = read();
       var err = validate(payload);
       if (err) { errEl.textContent = err; return; }

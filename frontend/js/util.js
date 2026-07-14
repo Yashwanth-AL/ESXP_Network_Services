@@ -69,7 +69,25 @@
 
   function initials(name) { return (name || "?").slice(0, 2); }
 
-  window.U = { h: h, clear: clear, icon: icon, fmtTime: fmtTime, fmtRelative: fmtRelative, initials: initials };
+  // Compact human duration from a seconds count, e.g. 4000 -> "1h 6m", 90 -> "1m 30s".
+  function fmtDuration(totalSeconds) {
+    var s = Number(totalSeconds) || 0;
+    if (s <= 0) return "0s";
+    var d = Math.floor(s / 86400); s -= d * 86400;
+    var hh = Math.floor(s / 3600); s -= hh * 3600;
+    var m = Math.floor(s / 60); s -= m * 60;
+    var parts = [];
+    if (d) parts.push(d + "d");
+    if (hh) parts.push(hh + "h");
+    if (m) parts.push(m + "m");
+    if (s || !parts.length) parts.push(s + "s");
+    return parts.slice(0, 2).join(" ");
+  }
+
+  window.U = {
+    h: h, clear: clear, icon: icon, fmtTime: fmtTime, fmtRelative: fmtRelative,
+    fmtDuration: fmtDuration, initials: initials
+  };
   window.h = h;
 
   // Global app namespace/state.

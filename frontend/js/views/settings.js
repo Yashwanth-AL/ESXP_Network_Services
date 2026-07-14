@@ -1,14 +1,21 @@
-/* Settings view: per-service control (start/stop/restart/reload), configuration
-   verify/save, and a status/history panel backed by the audit log. */
+/* Settings view: per-service control (start/stop/restart/reload) and live
+   status, plus operation history from the audit log. Configuration verify/
+   save now live in the Configuration tab next to each subnet -- this page is
+   scoped to infrastructure control, not config editing. */
 (function () {
   "use strict";
   var h = window.h, U = window.U, api = window.api;
+  var REFRESH_MS = 5000;
 
   window.App.views.settings = function (container) {
-    var state = { status: window.App.status || { services: {} } };
-    var logBox = h("div", { class: "log-box" });
-    var statusMsg = h("div", { style: "margin-bottom:10px" });
-    var pills = {};
+    var state = { status: window.App.status || { services: {}, kea: {} } };
+    var auditBody = h("tbody");
+    var panels = {}; // which -> { pill, card, statsWrap }
+    var timer = null;
+
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+    function startAuto() { stop(); timer = setInterval(refreshStatus, REFRESH_MS); }
+    window.App.addCleanup(stop);
 
     function svcPill(running) {
       return h("span", { class: "status-pill " + (running ? "up" : "down") },
@@ -18,10 +25,34 @@
     function refreshStatus() {
       return api.get("/system/status").then(function (s) {
         state.status = s; window.App.status = s;
-        ["dhcp4", "dhcp6", "ctrl_agent"].forEach(function (k) {
-          if (pills[k]) { U.clear(pills[k]); pills[k].appendChild(svcPill(!!(s.services && s.services[k]))); }
-        });
-      }).catch(function () { /* toast handled elsewhere */ });
+        Object.keys(panels).forEach(updatePanel);
+      }).catch(function () { /* background poll failure: keep last-known state, no toast noise */ });
+    }
+
+    function updatePanel(which) {
+      var p = panels[which];
+      if (!p) return;
+      var running = !!(state.status.services && state.status.services[which]);
+      U.clear(p.pill); p.pill.appendChild(svcPill(running));
+      p.card.classList.toggle("accent-up", running);
+      p.card.classList.toggle("accent-down", !running);
+      if (p.statsWrap) renderStats(which, p.statsWrap);
+    }
+
+    function renderStats(which, wrap) {
+      U.clear(wrap);
+      var info = state.status.kea && state.status.kea[which];
+      if (!info) {
+        wrap.appendChild(h("div", { class: "muted", style: "font-size:12.5px;margin-bottom:10px" },
+          "No status data yet."));
+        return;
+      }
+      wrap.appendChild(h("div", { class: "kv" }, h("span", null, "PID"),
+        h("span", { class: "mono" }, info.pid != null ? String(info.pid) : "—")));
+      wrap.appendChild(h("div", { class: "kv" }, h("span", null, "Uptime"),
+        h("span", null, info.uptime != null ? U.fmtDuration(info.uptime) : "—")));
+      wrap.appendChild(h("div", { class: "kv" }, h("span", null, "Config reloaded"),
+        h("span", null, info.reload != null ? U.fmtDuration(info.reload) + " ago" : "—")));
     }
 
     function serviceAction(which, action, btn) {
@@ -36,77 +67,52 @@
       });
     }
 
-    function configAction(service, kind, btn) {
-      var label = btn.textContent; btn.disabled = true; btn.innerHTML = '<span class="spin spin-dark"></span>';
-      api.post("/config/" + service + "/" + kind).then(function (res) {
-        setStatus(res.ok, (service.toUpperCase() + " " + (kind === "verify" ? "verify" : "save") + ": ") + res.message);
-        if (res.ok) window.toast.success(res.message, kind === "verify" ? "Configuration valid" : "Configuration saved");
-        else window.toast.error(res.message, kind === "verify" ? "Validation failed" : "Save failed");
-      }).catch(function (e) {
-        setStatus(false, e.message);
-        window.toast.error(e.message, "Configuration");
-      }).then(function () {
-        btn.disabled = false; btn.textContent = label; loadHistory();
-      });
-    }
+    function servicePanel(which, title, opts) {
+      opts = opts || {};
+      var pill = h("span");
+      var statsWrap = opts.noStats ? null : h("div");
+      var card = h("div", { class: "card" });
+      panels[which] = { pill: pill, card: card, statsWrap: statsWrap };
 
-    function setStatus(ok, msg) {
-      U.clear(statusMsg);
-      statusMsg.appendChild(h("div", { class: "banner", style: ok
-        ? "background:var(--se-green-050);border-color:#bfe6c8;color:#1c7a34"
-        : "" },
-        h("strong", null, ok ? "OK" : "Problem"), h("span", null, msg)));
-    }
-
-    function servicePanel(which, title) {
-      var pill = h("span"); pills[which] = pill;
-      pill.appendChild(svcPill(!!(state.status.services && state.status.services[which])));
       function b(action, cls, text) {
         var btn = h("button", { class: "btn " + cls + " btn-sm" }, text);
         btn.onclick = function () { serviceAction(which, action, btn); };
         return btn;
       }
-      var controls = which === "ctrl_agent"
-        ? [b("restart", "btn-outline", "Restart")]
+      var controls = opts.singleAction
+        ? [b(opts.singleAction, "btn-outline", opts.singleLabel)]
         : [b("start", "btn-primary", "Start"), b("stop", "btn-outline", "Stop"),
            b("restart", "btn-outline", "Restart"), b("reload", "btn-outline", "Reload")];
-      var configRow = which === "ctrl_agent" ? null :
-        h("div", { class: "svc-controls", style: "margin-top:14px" },
-          verifyBtn(which === "dhcp4" ? "dhcp4" : "dhcp6"),
-          saveBtn(which === "dhcp4" ? "dhcp4" : "dhcp6"));
-      return h("div", { class: "card" },
-        h("div", { class: "card-head" }, h("h3", null, title), h("div", { class: "actions" }, pill)),
-        h("div", { class: "card-body" },
-          h("div", { class: "muted", style: "font-size:12px;margin-bottom:6px" }, "Service control"),
-          h("div", { class: "svc-controls" }, controls),
-          configRow ? h("div", { class: "muted", style: "font-size:12px;margin:14px 0 0" }, "Configuration") : null,
-          configRow));
-    }
 
-    function verifyBtn(service) {
-      var btn = h("button", { class: "btn btn-outline btn-sm" }, "Verify configuration");
-      btn.onclick = function () { configAction(service, "verify", btn); };
-      return btn;
-    }
-    function saveBtn(service) {
-      var btn = h("button", { class: "btn btn-primary btn-sm" }, "Save configuration");
-      btn.onclick = function () { configAction(service, "save", btn); };
-      return btn;
+      card.appendChild(h("div", { class: "card-head" }, h("h3", null, title), h("div", { class: "actions" }, pill)));
+      card.appendChild(h("div", { class: "card-body" },
+        statsWrap,
+        h("div", { class: "svc-controls" }, controls)));
+
+      updatePanel(which);
+      return card;
     }
 
     function loadHistory() {
       api.get("/system/audit?limit=60").then(function (rows) {
-        U.clear(logBox);
-        if (!rows.length) { logBox.appendChild(h("div", { class: "muted" }, "No activity yet.")); return; }
+        U.clear(auditBody);
+        if (!rows.length) {
+          auditBody.appendChild(h("tr", null, h("td", { colspan: 6, class: "table-empty" }, "No activity yet.")));
+          return;
+        }
         rows.forEach(function (r) {
-          logBox.appendChild(h("div", { class: "log-line" },
-            h("span", { class: "t" }, "[" + r.ts + "] "),
-            h("span", { class: r.status === "success" ? "ok" : "err" }, r.status.toUpperCase()),
-            " " + (r.username || "-") + " · " + r.category + "/" + r.action +
-            (r.detail ? " — " + r.detail : "")));
+          auditBody.appendChild(h("tr", null,
+            h("td", { class: "mono" }, r.ts),
+            h("td", null, r.username || "—"),
+            h("td", null, r.category),
+            h("td", null, r.action),
+            h("td", null, h("span", { class: "badge " + (r.status === "success" ? "green" : "red") }, r.status)),
+            h("td", null, r.detail || h("span", { class: "muted" }, "—"))));
         });
       }).catch(function (e) {
-        U.clear(logBox); logBox.appendChild(h("div", { class: "err" }, "Could not load history: " + e.message));
+        U.clear(auditBody);
+        auditBody.appendChild(h("tr", null,
+          h("td", { colspan: 6, class: "table-empty" }, "Could not load history: " + e.message)));
       });
     }
 
@@ -115,24 +121,30 @@
       container.appendChild(h("div", { class: "page-head" },
         h("div", null,
           h("h1", null, "Settings"),
-          h("div", { class: "sub" }, "Control the Kea services and manage configuration")),
+          h("div", { class: "sub" }, "Service control and live status for the Kea DHCP server")),
         h("div", { class: "actions" },
           h("button", { class: "btn btn-outline", onClick: function () { refreshStatus(); loadHistory(); } }, "↻ Refresh"))));
 
-      container.appendChild(statusMsg);
       container.appendChild(h("div", { class: "panel-grid" },
         servicePanel("dhcp4", "DHCPv4 Server"),
-        servicePanel("dhcp6", "DHCPv6 Server")));
-      container.appendChild(h("div", { style: "margin-top:18px" },
-        servicePanel("ctrl_agent", "Kea Control Agent (REST API)")));
+        servicePanel("dhcp6", "DHCPv6 Server"),
+        servicePanel("ctrl_agent", "Kea Control Agent", { noStats: true, singleAction: "restart", singleLabel: "Restart" })));
 
       container.appendChild(h("div", { class: "card", style: "margin-top:18px" },
-        h("div", { class: "card-head" }, h("h3", null, "Status & operation history")),
-        h("div", { class: "card-body" }, logBox)));
+        h("div", { class: "card-head" },
+          h("h3", null, "Operation history"),
+          h("div", { class: "actions" }, h("span", { class: "muted", style: "font-size:12px" }, "Last 60 events"))),
+        h("div", { class: "table-wrap" },
+          h("table", { class: "data" },
+            h("thead", null, h("tr", null,
+              h("th", null, "Time"), h("th", null, "User"), h("th", null, "Category"),
+              h("th", null, "Action"), h("th", null, "Status"), h("th", null, "Detail"))),
+            auditBody))));
     }
 
     render();
     refreshStatus();
     loadHistory();
+    startAuto();
   };
 })();
