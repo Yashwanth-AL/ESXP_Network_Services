@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESXP Network Services</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="modal-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
+
+  <!-- Load order matters: helpers first, bootstrap last. No build step, no CDN. -->
+  <script src="/js/util.js"></script>
+  <script src="/js/toast.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/validation.js"></script>
+  <script src="/js/views/login.js"></script>
+  <script src="/js/views/dhcp.js"></script>
+  <script src="/js/views/leases.js"></script>
+  <script src="/js/views/settings.js"></script>
+  <script src="/js/views/placeholder.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
