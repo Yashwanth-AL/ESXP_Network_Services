@@ -1,5 +1,6 @@
-/* DHCP Configuration view: IPv4 / IPv6 tabs, two-pane subnet editor with an
-   inline reservations table. Talks to /api/dhcp4/* and /api/dhcp6/*. */
+/* DHCP Configuration view: IPv4 / IPv6 tabs, full-width subnet table with a
+   stacked detail panel (subnet form + reservations) below it. Talks to
+   /api/dhcp4/* and /api/dhcp6/*. */
 (function () {
   "use strict";
   var h = window.h, U = window.U, V = window.V, api = window.api;
@@ -23,11 +24,69 @@
       opts.hint ? h("div", { class: "hint" }, opts.hint) : null);
   }
 
+  // --- duration helpers (seconds <-> friendly amount+unit) -------------------
+  // Kea's API wants plain integer seconds. These helpers let the operator pick
+  // an amount plus a unit (minutes/hours/days) instead of typing raw seconds.
+  var UNIT_SECONDS = { seconds: 1, minutes: 60, hours: 3600, days: 86400 };
+  var UNIT_ORDER = ["days", "hours", "minutes", "seconds"];
+
+  function decomposeSeconds(sec) {
+    sec = Number(sec) || 0;
+    if (sec === 0) return { amount: 0, unit: "seconds" };
+    for (var i = 0; i < UNIT_ORDER.length; i++) {
+      var unit = UNIT_ORDER[i];
+      var factor = UNIT_SECONDS[unit];
+      if (sec % factor === 0) return { amount: sec / factor, unit: unit };
+    }
+    return { amount: sec, unit: "seconds" };
+  }
+
+  function toSeconds(amount, unit) {
+    var factor = UNIT_SECONDS[unit] || 1;
+    var n = Number(amount);
+    if (!isFinite(n) || n < 0) n = 0;
+    return Math.round(n * factor);
+  }
+
+  // Compact human display for read-only table cells, e.g. 4000 -> "1h 6m".
+  function formatDuration(totalSeconds) {
+    var s = Number(totalSeconds) || 0;
+    if (s <= 0) return "0s";
+    var d = Math.floor(s / 86400); s -= d * 86400;
+    var hh = Math.floor(s / 3600); s -= hh * 3600;
+    var m = Math.floor(s / 60); s -= m * 60;
+    var parts = [];
+    if (d) parts.push(d + "d");
+    if (hh) parts.push(hh + "h");
+    if (m) parts.push(m + "m");
+    if (s || !parts.length) parts.push(s + "s");
+    return parts.slice(0, 2).join(" ");
+  }
+
+  // A "field" whose control is [number amount] + [unit select], returning the
+  // total in seconds via getSeconds(). Drop-in alongside field() in a form-grid.
+  function durationField(label, seconds, opts) {
+    opts = opts || {};
+    var d = decomposeSeconds(seconds);
+    var amountInput = h("input", { type: "number", min: "0", value: String(d.amount) });
+    var unitSelect = h("select");
+    UNIT_ORDER.slice().reverse().forEach(function (u) {
+      var opt = h("option", { value: u }, u.charAt(0).toUpperCase() + u.slice(1));
+      if (u === d.unit) opt.selected = true;
+      unitSelect.appendChild(opt);
+    });
+    var wrap = h("div", { class: "field" + (opts.full ? " full" : "") },
+      h("label", null, label + (opts.req ? " *" : "")),
+      h("div", { class: "duration-row" }, amountInput, unitSelect),
+      opts.hint ? h("div", { class: "hint" }, opts.hint) : null);
+    return { el: wrap, getSeconds: function () { return toSeconds(amountInput.value, unitSelect.value); } };
+  }
+
   window.App.views.dhcpConfig = function (container) {
     var state = { version: 4, subnets: [], selectedId: null, mode: "empty" };
 
-    var listBody = h("div", { class: "subnet-list" });
-    var detail = h("div");
+    var listBody = h("tbody"); // persists across renderShell() calls; repopulated by renderList()
+    var detailWrap = h("div"); // holds the config card + reservations card, stacked full-width
 
     function tabButton(v, label) {
       return h("div", {
@@ -40,6 +99,17 @@
       }, label);
     }
 
+    function theadRow() {
+      return state.version === 4
+        ? h("tr", null, h("th", null, "Subnet"), h("th", null, "Pool range"),
+            h("th", null, "Gateway"), h("th", null, "DNS servers"),
+            h("th", null, "Valid lifetime"), h("th", null, "Reserved"), h("th", null, ""))
+        : h("tr", null, h("th", null, "Subnet"), h("th", null, "Pool range"),
+            h("th", null, "DNS servers"), h("th", null, "Preferred / Valid"),
+            h("th", null, "Reserved"), h("th", null, ""));
+    }
+    function colCount() { return state.version === 4 ? 7 : 6; }
+
     function renderShell() {
       U.clear(container);
       container.appendChild(
@@ -49,22 +119,25 @@
             h("div", { class: "sub" }, "Manage subnets and static reservations for the Kea DHCP server"))));
       container.appendChild(
         h("div", { class: "tabs" }, tabButton(4, "IPv4"), tabButton(6, "IPv6")));
+
       container.appendChild(
-        h("div", { class: "two-pane" },
-          h("div", { class: "card" },
-            h("div", { class: "card-head" },
-              h("h3", null, "Subnets"),
-              h("div", { class: "actions" },
-                h("button", { class: "btn btn-primary btn-sm", onClick: newSubnet }, "+ New"))),
-            listBody),
-          h("div", { class: "card" }, detail)));
+        h("div", { class: "card" },
+          h("div", { class: "card-head" },
+            h("h3", null, "Subnets"),
+            h("div", { class: "actions" },
+              h("button", { class: "btn btn-primary btn-sm", onClick: newSubnet }, "+ New subnet"))),
+          h("div", { class: "table-wrap" },
+            h("table", { class: "data" }, h("thead", null, theadRow()), listBody))));
+
+      container.appendChild(detailWrap);
       renderList();
       renderDetail();
     }
 
     function loadSubnets() {
       U.clear(listBody);
-      listBody.appendChild(h("div", { class: "center-load" }, h("span", { class: "spin spin-dark" }), "Loading…"));
+      listBody.appendChild(h("tr", null,
+        h("td", { colspan: colCount(), class: "center-load" }, h("span", { class: "spin spin-dark" }), "Loading…")));
       api.get(base(state.version) + "/subnets").then(function (rows) {
         state.subnets = rows;
         renderList();
@@ -74,7 +147,7 @@
         renderDetail();
       }).catch(function (e) {
         U.clear(listBody);
-        listBody.appendChild(h("div", { class: "table-empty" }, "Could not load subnets."));
+        listBody.appendChild(h("tr", null, h("td", { colspan: colCount(), class: "table-empty" }, "Could not load subnets.")));
         window.toast.error(e.message, "DHCPv" + state.version);
       });
     }
@@ -82,47 +155,71 @@
     function renderList() {
       U.clear(listBody);
       if (!state.subnets.length) {
-        listBody.appendChild(h("div", { class: "empty" }, "No subnets configured yet. Click “+ New”."));
+        listBody.appendChild(h("tr", null,
+          h("td", { colspan: colCount(), class: "table-empty" }, "No subnets configured yet. Click “+ New subnet”.")));
         return;
       }
       state.subnets.forEach(function (s) {
-        var meta = state.version === 4
-          ? (s.pool_start ? s.pool_start + " – " + s.pool_end : "no pool")
-          : (s.pool_start ? s.pool_start + " – " + s.pool_end : "no pool");
-        listBody.appendChild(
-          h("div", {
-            class: "item" + (state.selectedId === s.id && state.mode === "edit" ? " active" : ""),
-            onClick: function () { selectSubnet(s.id); }
-          },
-            h("span", { class: "cidr" }, s.subnet),
-            h("span", { class: "meta" }, meta + " · " + (s.reservation_count || 0) + " reserved")));
+        var selected = state.selectedId === s.id && state.mode === "edit";
+        var pool = s.pool_start ? (s.pool_start + " – " + s.pool_end) : "—";
+        var dns = (s.dns_servers && s.dns_servers.length) ? s.dns_servers.join(", ") : "—";
+        var actions = h("div", { class: "row-actions" },
+          h("button", {
+            class: "btn btn-ghost btn-sm",
+            onClick: function (e) { e.stopPropagation(); selectSubnet(s.id); }
+          }, "Configure"),
+          h("button", {
+            class: "btn btn-ghost btn-sm",
+            onClick: function (e) { e.stopPropagation(); deleteSubnet(s); }
+          }, "Delete"));
+
+        var cells = state.version === 4
+          ? [h("td", { class: "mono subnet-cidr" }, s.subnet), h("td", null, pool),
+             h("td", null, s.gateway || "—"), h("td", null, dns),
+             h("td", null, formatDuration(s.valid_lifetime)),
+             h("td", null, String(s.reservation_count || 0)), h("td", null, actions)]
+          : [h("td", { class: "mono subnet-cidr" }, s.subnet), h("td", null, pool),
+             h("td", null, dns),
+             h("td", null, formatDuration(s.preferred_lifetime) + " / " + formatDuration(s.valid_lifetime)),
+             h("td", null, String(s.reservation_count || 0)), h("td", null, actions)];
+
+        listBody.appendChild(h("tr", {
+          class: "clickable" + (selected ? " selected" : ""),
+          onClick: function () { selectSubnet(s.id); }
+        }, cells));
       });
     }
 
     function newSubnet() { state.mode = "new"; state.selectedId = null; renderList(); renderDetail(); }
     function selectSubnet(id) { state.mode = "edit"; state.selectedId = id; renderList(); renderDetail(); }
+    function closeDetail() { state.mode = "empty"; state.selectedId = null; renderList(); renderDetail(); }
 
     function currentSubnet() {
       return state.subnets.filter(function (s) { return s.id === state.selectedId; })[0] || null;
     }
 
-    // --- detail pane ---------------------------------------------------------
+    // --- detail (config form + reservations), stacked below the table --------
     function renderDetail() {
-      U.clear(detail);
+      U.clear(detailWrap);
       if (state.mode === "empty") {
-        detail.appendChild(h("div", { class: "card-body" },
-          h("div", { class: "table-empty" }, "Select a subnet to view or edit, or create a new one.")));
+        if (state.subnets.length) {
+          detailWrap.appendChild(h("div", { class: "muted", style: "padding:10px 2px" },
+            "Select a subnet above to configure it, or click “+ New subnet”."));
+        }
         return;
       }
       var isNew = state.mode === "new";
       var s = isNew ? {} : currentSubnet();
-      if (!isNew && !s) { detail.appendChild(h("div", { class: "card-body" }, "Subnet not found.")); return; }
+      if (!isNew && !s) return;
 
-      detail.appendChild(h("div", { class: "card-head" },
-        h("h3", null, isNew ? "New IPv" + state.version + " subnet" : "Subnet " + s.subnet)));
-
+      var card = h("div", { class: "card" },
+        h("div", { class: "card-head" },
+          h("h3", null, isNew ? "New IPv" + state.version + " subnet" : "Configure " + s.subnet),
+          h("div", { class: "actions" },
+            h("button", { class: "btn btn-ghost btn-sm", onClick: closeDetail }, "Close"))));
       var form = state.version === 4 ? form4(s) : form6(s);
-      detail.appendChild(h("div", { class: "card-body" }, form.el));
+      card.appendChild(h("div", { class: "card-body" }, form.el));
+      detailWrap.appendChild(card);
 
       if (!isNew) renderReservations();
     }
@@ -132,7 +229,7 @@
       saveBtn.addEventListener("click", function () { onSave(saveBtn); });
       var children = [saveBtn];
       if (!isNew) {
-        children.push(h("button", { class: "btn btn-danger btn-outline", onClick: onDelete }, "Delete subnet"));
+        children.push(h("button", { class: "btn btn-danger btn-outline", onClick: function () { onDelete(); } }, "Delete subnet"));
       }
       return h("div", { class: "form-actions" }, children);
     }
@@ -146,9 +243,9 @@
       var poolEnd = h("input", { type: "text", value: s.pool_end || "", placeholder: "192.168.10.200" });
       var gateway = h("input", { type: "text", value: s.gateway || "", placeholder: "192.168.10.1" });
       var dns = h("input", { type: "text", value: (s.dns_servers || []).join(", "), placeholder: "8.8.8.8, 8.8.4.4" });
-      var valid = h("input", { type: "number", value: s.valid_lifetime != null ? s.valid_lifetime : 4000 });
-      var renew = h("input", { type: "number", value: s.renew_timer != null ? s.renew_timer : 1000 });
-      var rebind = h("input", { type: "number", value: s.rebind_timer != null ? s.rebind_timer : 2000 });
+      var validD = durationField("Valid lifetime", s.valid_lifetime != null ? s.valid_lifetime : 4000);
+      var renewD = durationField("Renew timer", s.renew_timer != null ? s.renew_timer : 1000);
+      var rebindD = durationField("Rebind timer", s.rebind_timer != null ? s.rebind_timer : 2000);
       var errEl = h("div", { class: "err-text" });
 
       function read() {
@@ -156,7 +253,7 @@
           subnet: subnet.value.trim(), pool_start: poolStart.value.trim(), pool_end: poolEnd.value.trim(),
           gateway: gateway.value.trim(),
           dns_servers: dns.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean),
-          valid_lifetime: Number(valid.value), renew_timer: Number(renew.value), rebind_timer: Number(rebind.value)
+          valid_lifetime: validD.getSeconds(), renew_timer: renewD.getSeconds(), rebind_timer: rebindD.getSeconds()
         };
       }
       function validate(p) {
@@ -169,15 +266,13 @@
       var isNew = state.mode === "new";
       var el = h("div", null,
         h("div", { class: "form-grid" },
-          field("Subnet (CIDR)", subnet, { req: true, full: false }),
+          field("Subnet (CIDR)", subnet, { req: true }),
           field("Subnet mask", netmask, { hint: "Derived from the prefix" }),
           field("Pool start", poolStart, { req: true }),
           field("Pool end", poolEnd, { req: true }),
           field("Default gateway", gateway, { hint: "Optional (routers option)" }),
           field("DNS servers", dns, { hint: "Comma-separated" }),
-          field("Valid lifetime (s)", valid),
-          field("Renew timer (s)", renew),
-          field("Rebind timer (s)", rebind)),
+          validD.el, renewD.el, rebindD.el),
         errEl,
         saveBar(function (btn) { submitSubnet(read, validate, errEl, btn); }, isNew, deleteSubnet));
       return { el: el };
@@ -189,18 +284,18 @@
       var poolStart = h("input", { type: "text", value: s.pool_start || "", placeholder: "2001:db8:1::1000" });
       var poolEnd = h("input", { type: "text", value: s.pool_end || "", placeholder: "2001:db8:1::ffff" });
       var dns = h("input", { type: "text", value: (s.dns_servers || []).join(", "), placeholder: "2001:4860:4860::8888" });
-      var pref = h("input", { type: "number", value: s.preferred_lifetime != null ? s.preferred_lifetime : 3000 });
-      var valid = h("input", { type: "number", value: s.valid_lifetime != null ? s.valid_lifetime : 4000 });
-      var renew = h("input", { type: "number", value: s.renew_timer != null ? s.renew_timer : 1000 });
-      var rebind = h("input", { type: "number", value: s.rebind_timer != null ? s.rebind_timer : 2000 });
+      var prefD = durationField("Preferred lifetime", s.preferred_lifetime != null ? s.preferred_lifetime : 3000);
+      var validD = durationField("Valid lifetime", s.valid_lifetime != null ? s.valid_lifetime : 4000);
+      var renewD = durationField("Renew timer", s.renew_timer != null ? s.renew_timer : 1000);
+      var rebindD = durationField("Rebind timer", s.rebind_timer != null ? s.rebind_timer : 2000);
       var errEl = h("div", { class: "err-text" });
 
       function read() {
         return {
           subnet: subnet.value.trim(), pool_start: poolStart.value.trim(), pool_end: poolEnd.value.trim(),
           dns_servers: dns.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean),
-          preferred_lifetime: Number(pref.value), valid_lifetime: Number(valid.value),
-          renew_timer: Number(renew.value), rebind_timer: Number(rebind.value)
+          preferred_lifetime: prefD.getSeconds(), valid_lifetime: validD.getSeconds(),
+          renew_timer: renewD.getSeconds(), rebind_timer: rebindD.getSeconds()
         };
       }
       function validate(p) {
@@ -208,8 +303,7 @@
         e = V.pool(p.pool_start, p.pool_end, p.subnet, 6); if (e) return e;
         for (var i = 0; i < p.dns_servers.length; i++) { e = V.ip(p.dns_servers[i], 6); if (e) return "DNS " + e; }
         e = V.timers(p.valid_lifetime, p.renew_timer, p.rebind_timer); if (e) return e;
-        if (Number(p.preferred_lifetime) < 0) return "Preferred lifetime must be non-negative";
-        if (p.valid_lifetime && Number(p.preferred_lifetime) > p.valid_lifetime)
+        if (p.valid_lifetime && p.preferred_lifetime > p.valid_lifetime)
           return "Preferred lifetime must not exceed valid lifetime";
         return null;
       }
@@ -220,10 +314,7 @@
           field("Pool start", poolStart, { req: true }),
           field("Pool end", poolEnd, { req: true }),
           field("DNS servers", dns, { hint: "Comma-separated", full: true }),
-          field("Preferred lifetime (s)", pref),
-          field("Valid lifetime (s)", valid),
-          field("Renew timer (s)", renew),
-          field("Rebind timer (s)", rebind)),
+          prefD.el, validD.el, renewD.el, rebindD.el),
         errEl,
         saveBar(function (btn) { submitSubnet(read, validate, errEl, btn); }, isNew, deleteSubnet));
       return { el: el };
@@ -253,8 +344,8 @@
       });
     }
 
-    function deleteSubnet() {
-      var s = currentSubnet(); if (!s) return;
+    function deleteSubnet(target) {
+      var s = target || currentSubnet(); if (!s) return;
       window.confirmDialog("Delete subnet " + s.subnet + " and all its reservations?",
         { title: "Delete subnet", danger: true, confirmText: "Delete" }).then(function (ok) {
         if (!ok) return;
@@ -279,7 +370,7 @@
             h("thead", null, h("tr", null,
               h("th", null, idType), h("th", null, "Reserved IP"), h("th", null, "Hostname"), h("th", null, ""))),
             tbody)));
-      detail.appendChild(card);
+      detailWrap.appendChild(card);
 
       api.get(base(state.version) + "/subnets/" + state.selectedId + "/reservations").then(function (rows) {
         U.clear(tbody);
@@ -333,19 +424,10 @@
             : api.post(path, payload);
           return req.then(function () {
             window.toast.success("Reservation " + (existing ? "updated" : "added"));
-            loadSubnets(); renderReservationsRefresh();
+            loadSubnets(); renderDetail();
           });
         }
       });
-    }
-
-    // Re-render only the reservation table (detail already has the subnet form).
-    function renderReservationsRefresh() {
-      // Remove the last card (reservations) then re-add.
-      var cards = detail.querySelectorAll(".card");
-      if (cards.length) { /* the reservations card is appended last in detail */ }
-      // Simplest: fully re-render detail (keeps form + reloads reservations).
-      renderDetail();
     }
 
     function deleteReservation(idVal) {
