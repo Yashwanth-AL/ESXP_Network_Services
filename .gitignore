@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Runtime data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment / secrets
+.env
+*.local
+
+# Local dev tooling (machine-specific paths)
+.claude/launch.json
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
