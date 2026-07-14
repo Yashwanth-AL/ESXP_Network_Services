@@ -49,8 +49,6 @@
       }
       wrap.appendChild(h("div", { class: "kv" }, h("span", null, "Uptime"),
         h("span", null, info.uptime != null ? U.fmtDuration(info.uptime) : "—")));
-      wrap.appendChild(h("div", { class: "kv" }, h("span", null, "Config reloaded"),
-        h("span", null, info.reload != null ? U.fmtDuration(info.reload) + " ago" : "—")));
     }
 
     function serviceAction(which, action, btn) {

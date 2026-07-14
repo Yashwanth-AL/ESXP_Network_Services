@@ -61,6 +61,10 @@ h1, h2, h3, h4 { margin: 0 0 .5rem; font-weight: 600; }
   box-shadow: var(--shadow-lg);
   padding: 34px 30px 30px;
   border-top: 4px solid var(--se-green);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 .login-card img { height: 56px; margin-bottom: 6px; border-radius: 6px; }
 .login-card .subtitle { color: var(--text-muted); margin-bottom: 22px; font-size: 13px; }
@@ -272,7 +276,12 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 .panel-stack { display: flex; flex-direction: column; gap: 18px; }
 .card.accent-up { border-top: 3px solid var(--se-green); }
 .card.accent-down { border-top: 3px solid var(--danger); }
-.svc-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.svc-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
 .kv { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
 .kv:last-child { border-bottom: none; margin-bottom: 6px; }
 .log-box {
