@@ -76,7 +76,7 @@
 
     var avatar = h("div", { class: "avatar" }, U.initials(App.user.username));
     var topbar = h("div", { class: "topbar" },
-      h("img", { class: "logo", src: "/assets/logo.svg", alt: "Schneider Electric" }),
+      h("img", { class: "logo", src: "/assets/logo.png", alt: "Schneider Electric" }),
       h("div", { class: "spacer" }),
       h("div", { class: "status-group" }, pillV4, pillV6),
       h("div", { class: "user-chip" }, avatar, h("span", null, App.user.username),

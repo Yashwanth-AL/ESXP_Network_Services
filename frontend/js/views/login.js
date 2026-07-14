@@ -37,7 +37,7 @@
     app.appendChild(
       h("div", { class: "login-wrap" },
         h("div", { class: "login-card" },
-          h("img", { src: "/assets/logo.svg", alt: "Schneider Electric" }),
+          h("img", { src: "/assets/logo.png", alt: "Schneider Electric" }),
           h("div", { class: "subtitle" }, "Network Services — DHCP Management"),
           form)));
     userInput.focus();

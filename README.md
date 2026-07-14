@@ -261,6 +261,9 @@ cd backend && python -m app        # serves http://0.0.0.0:8080
 
 ## Note on branding assets
 
-`frontend/assets/logo.svg` and `favicon.svg` are **placeholder** brand lockups
-in the correct green. Replace them with the official Schneider Electric logo
-asset to use the exact registered mark.
+`frontend/assets/logo.png` (header/login lockup) and `favicon.png` (tab icon)
+are the Schneider Electric brand images supplied for this project. If you
+later get higher-resolution or vector (SVG/EPS) originals from Schneider's
+brand portal, drop them in under the same filenames — nothing else needs to
+change, since the header, login page, and `<link rel="icon">` all reference
+just these two files.
