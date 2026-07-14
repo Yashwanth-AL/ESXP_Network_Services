@@ -269,12 +269,20 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 .modal .form-grid { grid-template-columns: 1fr; }
 
 /* --- Settings panels -------------------------------------------------------- */
-.panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+.panel-stack { display: flex; flex-direction: column; gap: 18px; }
 .card.accent-up { border-top: 3px solid var(--se-green); }
 .card.accent-down { border-top: 3px solid var(--danger); }
 .svc-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .kv { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
 .kv:last-child { border-bottom: none; margin-bottom: 6px; }
+.log-box {
+  background: #10171d; color: #d6e2ea; border-radius: var(--radius);
+  font-family: "Consolas", monospace; font-size: 12px; padding: 12px 14px;
+  max-height: 320px; overflow: auto; white-space: pre-wrap; line-height: 1.5;
+}
+.log-line .t { color: #7c8b97; }
+.log-line .ok { color: var(--se-green); }
+.log-line .err { color: #ff6b6b; }
 
 /* --- Toasts ----------------------------------------------------------------- */
 #toast-root {
@@ -316,5 +324,4 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 @media (max-width: 900px) {
   :root { --sidebar-w: 0px; }
   .sidebar { display: none; }
-  .panel-grid { grid-template-columns: 1fr; }
 }

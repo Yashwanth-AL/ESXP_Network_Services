@@ -9,7 +9,7 @@
 
   window.App.views.settings = function (container) {
     var state = { status: window.App.status || { services: {}, kea: {} } };
-    var auditBody = h("tbody");
+    var logBox = h("div", { class: "log-box" });
     var panels = {}; // which -> { pill, card, statsWrap }
     var timer = null;
 
@@ -47,8 +47,6 @@
           "No status data yet."));
         return;
       }
-      wrap.appendChild(h("div", { class: "kv" }, h("span", null, "PID"),
-        h("span", { class: "mono" }, info.pid != null ? String(info.pid) : "—")));
       wrap.appendChild(h("div", { class: "kv" }, h("span", null, "Uptime"),
         h("span", null, info.uptime != null ? U.fmtDuration(info.uptime) : "—")));
       wrap.appendChild(h("div", { class: "kv" }, h("span", null, "Config reloaded"),
@@ -95,24 +93,17 @@
 
     function loadHistory() {
       api.get("/system/audit?limit=60").then(function (rows) {
-        U.clear(auditBody);
-        if (!rows.length) {
-          auditBody.appendChild(h("tr", null, h("td", { colspan: 6, class: "table-empty" }, "No activity yet.")));
-          return;
-        }
+        U.clear(logBox);
+        if (!rows.length) { logBox.appendChild(h("div", { class: "muted" }, "No activity yet.")); return; }
         rows.forEach(function (r) {
-          auditBody.appendChild(h("tr", null,
-            h("td", { class: "mono" }, r.ts),
-            h("td", null, r.username || "—"),
-            h("td", null, r.category),
-            h("td", null, r.action),
-            h("td", null, h("span", { class: "badge " + (r.status === "success" ? "green" : "red") }, r.status)),
-            h("td", null, r.detail || h("span", { class: "muted" }, "—"))));
+          logBox.appendChild(h("div", { class: "log-line" },
+            h("span", { class: "t" }, "[" + r.ts + "] "),
+            h("span", { class: r.status === "success" ? "ok" : "err" }, r.status.toUpperCase()),
+            " " + (r.username || "-") + " · " + r.category + "/" + r.action +
+            (r.detail ? " — " + r.detail : "")));
         });
       }).catch(function (e) {
-        U.clear(auditBody);
-        auditBody.appendChild(h("tr", null,
-          h("td", { colspan: 6, class: "table-empty" }, "Could not load history: " + e.message)));
+        U.clear(logBox); logBox.appendChild(h("div", { class: "err" }, "Could not load history: " + e.message));
       });
     }
 
@@ -125,21 +116,14 @@
         h("div", { class: "actions" },
           h("button", { class: "btn btn-outline", onClick: function () { refreshStatus(); loadHistory(); } }, "↻ Refresh"))));
 
-      container.appendChild(h("div", { class: "panel-grid" },
+      container.appendChild(h("div", { class: "panel-stack" },
         servicePanel("dhcp4", "DHCPv4 Server"),
         servicePanel("dhcp6", "DHCPv6 Server"),
         servicePanel("ctrl_agent", "Kea Control Agent", { noStats: true, singleAction: "restart", singleLabel: "Restart" })));
 
       container.appendChild(h("div", { class: "card", style: "margin-top:18px" },
-        h("div", { class: "card-head" },
-          h("h3", null, "Operation history"),
-          h("div", { class: "actions" }, h("span", { class: "muted", style: "font-size:12px" }, "Last 60 events"))),
-        h("div", { class: "table-wrap" },
-          h("table", { class: "data" },
-            h("thead", null, h("tr", null,
-              h("th", null, "Time"), h("th", null, "User"), h("th", null, "Category"),
-              h("th", null, "Action"), h("th", null, "Status"), h("th", null, "Detail"))),
-            auditBody))));
+        h("div", { class: "card-head" }, h("h3", null, "Status & operation history")),
+        h("div", { class: "card-body" }, logBox)));
     }
 
     render();
