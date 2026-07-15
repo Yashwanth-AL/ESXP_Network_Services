@@ -21,6 +21,11 @@ KEA_CONF_DIR="/etc/kea"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8080}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
+ADMIN_PASSWORD_IS_DEFAULT=0
+[[ "${ADMIN_PASSWORD}" == "admin" ]] && ADMIN_PASSWORD_IS_DEFAULT=1
+# Set FORCE_KEA_CONF=1 to reset /etc/kea/*.conf back to the shipped templates.
+# Off by default so re-running the installer never destroys live DHCP config.
+FORCE_KEA_CONF="${FORCE_KEA_CONF:-0}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -90,15 +95,25 @@ EOF
     warn "libdhcp_lease_cmds.so not found -- the Active Leases page will be unavailable until Kea's hook libraries are installed."
   fi
 
-  local ts; ts="$(date +%Y%m%d-%H%M%S)"
+  local ts target; ts="$(date +%Y%m%d-%H%M%S)"
   for f in kea-dhcp4.conf kea-dhcp6.conf kea-ctrl-agent.conf; do
-    [[ -f "${KEA_CONF_DIR}/${f}" ]] && cp -a "${KEA_CONF_DIR}/${f}" "${KEA_CONF_DIR}/${f}.bak-${ts}"
-    install -m 0640 "${SRC_ROOT}/install/kea/${f}" "${KEA_CONF_DIR}/${f}"
+    target="${KEA_CONF_DIR}/${f}"
+    if [[ -f "${target}" ]] && grep -q "/run/kea/kea[46]-ctrl-socket" "${target}" \
+       && [[ "${FORCE_KEA_CONF}" != "1" ]]; then
+      # Already wired by a previous run: this file now holds the operator's live
+      # subnets and reservations. Overwriting it with the blank template would
+      # destroy production DHCP config on a well-meaning re-run of the installer.
+      log "Keeping existing ${f} (already configured; FORCE_KEA_CONF=1 resets it to the template)."
+    else
+      [[ -f "${target}" ]] && cp -a "${target}" "${target}.bak-${ts}"
+      install -m 0640 "${SRC_ROOT}/install/kea/${f}" "${target}"
+    fi
     case "${f}" in
-      kea-dhcp4.conf|kea-dhcp6.conf) inject_lease_hook "${KEA_CONF_DIR}/${f}" "${hooks_dir}" ;;
+      kea-dhcp4.conf|kea-dhcp6.conf) inject_lease_hook "${target}" "${hooks_dir}" ;;
     esac
     # Kea daemons (running as kea_user) must be able to config-write these.
-    chown "${kea_user}:${kea_group}" "${KEA_CONF_DIR}/${f}"
+    chown "${kea_user}:${kea_group}" "${target}"
+    chmod 0640 "${target}"
   done
 
   # Let config-write reach /etc/kea even under ProtectSystem=strict, otherwise
@@ -113,10 +128,23 @@ EOF
 # --- 4. deploy dashboard app -------------------------------------------------
 deploy_app() {
   log "Deploying dashboard to ${INSTALL_DIR}…"
-  mkdir -p "${INSTALL_DIR}" "${ETC_DIR}" "${DATA_DIR}"
-  rm -rf "${INSTALL_DIR}/backend" "${INSTALL_DIR}/frontend"
+  install -d -m 0755 "${INSTALL_DIR}"
+  install -d -m 0750 "${ETC_DIR}"
+  # Holds dashboard.db: PBKDF2 password hashes + the full audit log. Keep it
+  # unreadable to other local accounts (the default 0755 would expose it).
+  install -d -m 0750 "${DATA_DIR}"
+  rm -rf "${INSTALL_DIR}/backend" "${INSTALL_DIR}/frontend" \
+         "${INSTALL_DIR}/install" "${INSTALL_DIR}/systemd"
   cp -a "${SRC_ROOT}/backend"  "${INSTALL_DIR}/backend"
   cp -a "${SRC_ROOT}/frontend" "${INSTALL_DIR}/frontend"
+  # Ship the scripts too, so the update/repair commands we print actually exist
+  # on the box once the operator's temporary clone is gone.
+  cp -a "${SRC_ROOT}/install"  "${INSTALL_DIR}/install"
+  cp -a "${SRC_ROOT}/systemd"  "${INSTALL_DIR}/systemd"
+  chmod 0755 "${INSTALL_DIR}/install"/*.sh
+  # Tighten anything already created with a looser mode.
+  [[ -f "${DATA_DIR}/dashboard.db" ]] && chmod 0600 "${DATA_DIR}/dashboard.db"
+  find "${DATA_DIR}" -maxdepth 1 -name 'dashboard.db-*' -exec chmod 0600 {} + 2>/dev/null || true
 
   log "Creating Python virtual environment…"
   python3 -m venv "${INSTALL_DIR}/.venv"
@@ -213,7 +241,14 @@ IP="$(hostname -I 2>/dev/null | awk '{print $1}')"; IP="${IP:-<server-ip>}"
 echo
 ok "Installation complete."
 echo -e "  Dashboard : ${c_g}http://${IP}:${DASHBOARD_PORT}/${c_0}"
-echo -e "  Login     : ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}   ${c_y}(change this on first login)${c_0}"
+# Never print the password itself -- it would persist in scrollback, install
+# logs and CI output. The operator either chose it or it is the documented default.
+if [[ "${ADMIN_PASSWORD_IS_DEFAULT}" -eq 1 ]]; then
+  echo -e "  Login     : ${ADMIN_USERNAME} / ${c_y}the default password 'admin' -- change it on first login${c_0}"
+else
+  echo -e "  Login     : ${ADMIN_USERNAME} / ${c_y}the ADMIN_PASSWORD you supplied${c_0}"
+fi
 echo -e "  Config    : ${ENV_FILE}"
-echo -e "  Update    : sudo ${INSTALL_DIR}/backend/../install/update.sh  (pulls from REPO_URL in ${ENV_FILE})"
+echo -e "  Update    : sudo ${INSTALL_DIR}/install/update.sh  (pulls from REPO_URL in ${ENV_FILE})"
+echo -e "  Repair Kea: sudo ${INSTALL_DIR}/install/repair-kea.sh"
 echo

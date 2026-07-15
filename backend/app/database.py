@@ -7,6 +7,7 @@ cross-thread connection sharing issues under the async server.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,10 +21,26 @@ def _ensure_parent(path: str) -> None:
     parent.mkdir(parents=True, exist_ok=True)
 
 
+def _restrict(path: str) -> None:
+    """Make a freshly created DB file owner-only.
+
+    It holds PBKDF2 password hashes and the audit log; the default umask would
+    leave it readable by every local account. The installer also locks down the
+    parent directory -- this covers dev runs and any non-installer deployment.
+    """
+    try:
+        os.chmod(path, 0o600)
+    except OSError:  # pragma: no cover - e.g. unsupported on some filesystems
+        pass
+
+
 @contextmanager
 def get_conn() -> Iterator[sqlite3.Connection]:
     _ensure_parent(settings.db_path)
+    is_new = not Path(settings.db_path).exists()
     conn = sqlite3.connect(settings.db_path, timeout=15)
+    if is_new:
+        _restrict(settings.db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")

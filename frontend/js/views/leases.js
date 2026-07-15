@@ -8,6 +8,7 @@
   window.App.views.leases = function (container) {
     var state = { version: 4, rows: [], filter: "", auto: true, selected: {} };
     var timer = null;
+    var reqSeq = 0;   // bumped per load(); stale responses are discarded
 
     var tbody = h("tbody");
     var countEl = h("span", { class: "muted" });
@@ -43,7 +44,7 @@
 
       container.appendChild(h("div", { class: "toolbar" },
         h("div", { class: "search" },
-          h("span", { html: U.icon('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/>', 16) }),
+          h("span", { unsafeHTML: U.icon('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/>', 16) }),
           searchInput),
         bulkBtn,
         h("label", { class: "status-pill", style: "cursor:pointer" }, autoChk, "Auto-refresh (5s)"),
@@ -114,13 +115,21 @@
     }
 
     function load() {
-      api.get("/leases/v" + state.version).then(function (rows) {
+      // Tag each request so a slow response for the tab we just left cannot
+      // overwrite the tab we are now on: switching v4 -> v6 quickly leaves two
+      // fetches in flight, and without this the last one to land wins and we
+      // render v4 leases (MAC) under the v6 (DUID) headers.
+      var seq = ++reqSeq;
+      var version = state.version;
+      api.get("/leases/v" + version).then(function (rows) {
+        if (seq !== reqSeq) return;
         state.rows = rows;
         // Drop selections for leases that no longer exist.
         var present = {}; rows.forEach(function (r) { present[r.ip] = true; });
         Object.keys(state.selected).forEach(function (k) { if (!present[k]) delete state.selected[k]; });
         renderRows();
       }).catch(function (e) {
+        if (seq !== reqSeq) return;
         countEl.textContent = "Unavailable";
         U.clear(tbody);
         tbody.appendChild(h("tr", null, h("td", { colspan: 8, class: "table-empty" }, "Could not load leases: " + e.message)));

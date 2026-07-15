@@ -4,6 +4,12 @@
 
   // Tiny hyperscript-style DOM builder.
   //   h('div', {class:'x', onClick: fn}, 'text', childNode)
+  //
+  // Text children go through createTextNode (see append), so anything from the
+  // server -- hostnames, Kea error text, audit detail -- is escaped by default.
+  // The one bypass is `unsafeHTML`, which assigns innerHTML verbatim: pass only
+  // markup this codebase itself authored (icon SVG), never server or user data.
+  // It is deliberately named so misuse is obvious at the call site.
   function h(tag, attrs) {
     var el = document.createElement(tag);
     if (attrs) {
@@ -12,7 +18,7 @@
         var v = attrs[k];
         if (v == null || v === false) continue;
         if (k === "class") el.className = v;
-        else if (k === "html") el.innerHTML = v;
+        else if (k === "unsafeHTML") el.innerHTML = v;
         else if (k === "dataset") { for (var d in v) el.dataset[d] = v[d]; }
         else if (k.slice(0, 2) === "on" && typeof v === "function") {
           el.addEventListener(k.slice(2).toLowerCase(), v);

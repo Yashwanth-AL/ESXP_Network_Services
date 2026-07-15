@@ -14,6 +14,7 @@ result codes: 0 success, 1 error, 2 unsupported, 3 empty/not-found.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 from typing import Any
 
@@ -26,6 +27,23 @@ DHCP4 = "dhcp4"
 DHCP6 = "dhcp6"
 
 _CONFIG_ROOT = {DHCP4: "Dhcp4", DHCP6: "Dhcp6"}
+
+# Every config mutation is a read-modify-write (config-get -> edit -> config-set).
+# Two overlapping edits would each start from the same snapshot and the second
+# config-set would silently discard the first one's change. The dashboard runs
+# as a single uvicorn process with one event loop (see app/__main__.py -- no
+# workers argument), so serialising per service here is sufficient to make the
+# whole cycle atomic.
+_config_locks: dict[str, asyncio.Lock] = {DHCP4: asyncio.Lock(), DHCP6: asyncio.Lock()}
+
+
+def config_lock(service: str) -> asyncio.Lock:
+    """Lock guarding the read-modify-write cycle for ``service``'s config.
+
+    Hold this across config_get -> mutate -> apply_config in every endpoint that
+    changes configuration.
+    """
+    return _config_locks[service]
 
 
 class KeaError(Exception):
@@ -206,3 +224,13 @@ async def lease4_update(lease: dict[str, Any]) -> None:
 
 async def lease6_update(lease: dict[str, Any]) -> None:
     await command("lease6-update", DHCP6, lease)
+
+
+async def lease4_wipe(subnet_id: int) -> None:
+    """Remove every DHCPv4 lease belonging to ``subnet_id``."""
+    await command("lease4-wipe", DHCP4, {"subnet-id": subnet_id})
+
+
+async def lease6_wipe(subnet_id: int) -> None:
+    """Remove every DHCPv6 lease belonging to ``subnet_id``."""
+    await command("lease6-wipe", DHCP6, {"subnet-id": subnet_id})

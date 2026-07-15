@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 
 from .. import audit, kea_client
 from ..auth import current_user
+from ..validation import parse_address
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
 
@@ -74,6 +75,10 @@ async def leases_v6(user: str = Depends(current_user)):
 
 @router.post("/v4/release")
 async def release_v4(ips: list[str] = Body(..., embed=True), user: str = Depends(current_user)):
+    # Validate up front (-> 422) so malformed input is rejected here rather than
+    # surfacing as an opaque Kea error, matching the DHCP routers' contract.
+    for ip in ips:
+        parse_address(ip, 4)
     released, errors = [], []
     for ip in ips:
         try:
@@ -81,13 +86,16 @@ async def release_v4(ips: list[str] = Body(..., embed=True), user: str = Depends
             released.append(ip)
         except kea_client.KeaError as exc:
             errors.append({"ip": ip, "error": exc.message})
-    audit.record(user, "lease", "dhcp4.release", "success" if not errors else "failure",
-                 f"released {len(released)}, {len(errors)} errors")
+    await audit.arecord(user, "lease", "dhcp4.release",
+                        "success" if not errors else "failure",
+                        f"released {len(released)}, {len(errors)} errors")
     return {"released": released, "errors": errors}
 
 
 @router.post("/v6/release")
 async def release_v6(ips: list[str] = Body(..., embed=True), user: str = Depends(current_user)):
+    for ip in ips:
+        parse_address(ip, 6)
     released, errors = [], []
     for ip in ips:
         try:
@@ -95,8 +103,9 @@ async def release_v6(ips: list[str] = Body(..., embed=True), user: str = Depends
             released.append(ip)
         except kea_client.KeaError as exc:
             errors.append({"ip": ip, "error": exc.message})
-    audit.record(user, "lease", "dhcp6.release", "success" if not errors else "failure",
-                 f"released {len(released)}, {len(errors)} errors")
+    await audit.arecord(user, "lease", "dhcp6.release",
+                        "success" if not errors else "failure",
+                        f"released {len(released)}, {len(errors)} errors")
     return {"released": released, "errors": errors}
 
 
@@ -104,6 +113,7 @@ async def release_v6(ips: list[str] = Body(..., embed=True), user: str = Depends
 
 @router.post("/v4/renew")
 async def renew_v4(ip: str = Body(..., embed=True), user: str = Depends(current_user)):
+    parse_address(ip, 4)
     lease = await kea_client.lease4_get(ip)
     if not lease:
         raise HTTPException(status_code=404, detail=f"Lease {ip} not found")
@@ -119,12 +129,13 @@ async def renew_v4(ip: str = Body(..., embed=True), user: str = Depends(current_
         payload["hostname"] = lease["hostname"]
     payload = {k: v for k, v in payload.items() if v is not None}
     await kea_client.lease4_update(payload)
-    audit.record(user, "lease", "dhcp4.renew", "success", ip)
+    await audit.arecord(user, "lease", "dhcp4.renew", "success", ip)
     return {"ok": True, "ip": ip, "expire": _iso(payload["expire"])}
 
 
 @router.post("/v6/renew")
 async def renew_v6(ip: str = Body(..., embed=True), user: str = Depends(current_user)):
+    parse_address(ip, 6)
     lease = await kea_client.lease6_get(ip)
     if not lease:
         raise HTTPException(status_code=404, detail=f"Lease {ip} not found")
@@ -143,5 +154,5 @@ async def renew_v6(ip: str = Body(..., embed=True), user: str = Depends(current_
         payload["hostname"] = lease["hostname"]
     payload = {k: v for k, v in payload.items() if v is not None}
     await kea_client.lease6_update(payload)
-    audit.record(user, "lease", "dhcp6.renew", "success", ip)
+    await audit.arecord(user, "lease", "dhcp6.renew", "success", ip)
     return {"ok": True, "ip": ip, "expire": _iso(payload["expire"])}

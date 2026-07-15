@@ -1,5 +1,13 @@
-"""Append-only audit logging."""
+"""Append-only audit logging.
+
+``record`` / ``recent`` are the blocking SQLite primitives. Async request
+handlers must use the ``a``-prefixed wrappers instead: the dashboard runs a
+single event loop, so a synchronous DB call inside a coroutine stalls *every*
+in-flight request, not just its own.
+"""
 from __future__ import annotations
+
+from starlette.concurrency import run_in_threadpool
 
 from .database import get_conn
 
@@ -27,3 +35,14 @@ def recent(limit: int = 100) -> list[dict]:
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# --- async-safe wrappers for use inside request handlers ---------------------
+
+async def arecord(username: str | None, category: str, action: str,
+                  status: str = "success", detail: str | None = None) -> None:
+    await run_in_threadpool(record, username, category, action, status, detail)
+
+
+async def arecent(limit: int = 100) -> list[dict]:
+    return await run_in_threadpool(recent, limit)

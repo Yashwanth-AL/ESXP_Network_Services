@@ -15,10 +15,10 @@ INSTALL_DIR="/opt/${APP_NAME}"
 ETC_DIR="/etc/${APP_NAME}"
 ENV_FILE="${ETC_DIR}/.env"
 
-c_g="\033[1;32m"; c_r="\033[1;31m"; c_b="\033[1;34m"; c_0="\033[0m"
-log() { echo -e "${c_b}[*]${c_0} $*"; }
-ok()  { echo -e "${c_g}[+]${c_0} $*"; }
-die() { echo -e "${c_r}[x]${c_0} $*" >&2; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Shared logging helpers (log/ok/warn/die).
+# shellcheck source=install/lib-kea.sh
+source "${SCRIPT_DIR}/lib-kea.sh"
 
 [[ "${EUID}" -eq 0 ]] || die "Please run as root (sudo ./install/update.sh)."
 [[ -f "${ENV_FILE}" ]] || die "Missing ${ENV_FILE}. Run install.sh first."
@@ -36,18 +36,49 @@ fi
 command -v git >/dev/null 2>&1 || die "git is not installed."
 
 TMP="$(mktemp -d)"
-cleanup() { rm -rf "${TMP}"; }
-trap cleanup EXIT
+BACKUP="$(mktemp -d)"
+RESTORE_ON_ERR=0
+
+cleanup() { rm -rf "${TMP}" "${BACKUP}"; }
+
+# The redeploy below replaces the live code in place. If any step after that
+# fails (a bad requirement, a network blip during pip), `set -e` would abort
+# with the old code already deleted and the service never restarted -- leaving
+# a server that only has a browser UI with no working backend. Put the previous
+# version back instead.
+rollback() {
+  [[ "${RESTORE_ON_ERR}" -eq 1 ]] || return 0
+  warn "Update failed -- restoring the previous version…"
+  rm -rf "${INSTALL_DIR}/backend" "${INSTALL_DIR}/frontend"
+  [[ -d "${BACKUP}/backend" ]]  && cp -a "${BACKUP}/backend"  "${INSTALL_DIR}/backend"
+  [[ -d "${BACKUP}/frontend" ]] && cp -a "${BACKUP}/frontend" "${INSTALL_DIR}/frontend"
+  systemctl restart esxp-dashboard || true
+  warn "Rolled back. The previous version is running again; nothing was updated."
+}
+trap 'rollback; cleanup' EXIT
 
 log "Cloning ${REPO_URL} (branch ${REPO_BRANCH})…"
 git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${TMP}" \
   || die "Clone failed. Check REPO_URL / network / credentials."
 [[ -d "${TMP}/backend" && -d "${TMP}/frontend" ]] || die "Cloned repo has no backend/ or frontend/."
 
+log "Backing up the current version…"
+[[ -d "${INSTALL_DIR}/backend" ]]  && cp -a "${INSTALL_DIR}/backend"  "${BACKUP}/backend"
+[[ -d "${INSTALL_DIR}/frontend" ]] && cp -a "${INSTALL_DIR}/frontend" "${BACKUP}/frontend"
+
 log "Redeploying application source…"
+RESTORE_ON_ERR=1
 rm -rf "${INSTALL_DIR}/backend" "${INSTALL_DIR}/frontend"
 cp -a "${TMP}/backend"  "${INSTALL_DIR}/backend"
 cp -a "${TMP}/frontend" "${INSTALL_DIR}/frontend"
+
+# Keep the deployed scripts current too, so update.sh/repair-kea.sh on the box
+# match the code that is running.
+if [[ -d "${TMP}/install" ]]; then
+  rm -rf "${INSTALL_DIR}/install"
+  cp -a "${TMP}/install" "${INSTALL_DIR}/install"
+  chmod 0755 "${INSTALL_DIR}/install"/*.sh
+fi
 
 log "Updating Python dependencies…"
 "${INSTALL_DIR}/.venv/bin/pip" install --quiet -r "${INSTALL_DIR}/backend/requirements.txt"
@@ -60,4 +91,7 @@ fi
 
 log "Restarting dashboard…"
 systemctl restart esxp-dashboard
+
+# Past the point of no return: everything succeeded, so keep the new version.
+RESTORE_ON_ERR=0
 ok "Update complete."

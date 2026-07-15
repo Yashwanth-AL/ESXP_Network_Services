@@ -69,6 +69,7 @@
 
   window.App.views.dhcpConfig = function (container) {
     var state = { version: 4, subnets: [], selectedId: null, mode: "empty" };
+    var reqSeq = 0;   // bumped per loadSubnets(); stale responses are discarded
 
     var listBody = h("tbody"); // persists across renderShell() calls; repopulated by renderList()
     var detailWrap = h("div"); // holds the config card + reservations card, stacked full-width
@@ -123,7 +124,13 @@
       U.clear(listBody);
       listBody.appendChild(h("tr", null,
         h("td", { colspan: colCount(), class: "center-load" }, h("span", { class: "spin spin-dark" }), "Loading…")));
-      api.get(base(state.version) + "/subnets").then(function (rows) {
+      // Tag each request so a slow response for the tab we just left cannot
+      // overwrite the tab we are now on (switch IPv4 -> IPv6 fast enough and the
+      // last response to land wins, rendering the wrong family's subnets).
+      var seq = ++reqSeq;
+      var version = state.version;
+      api.get(base(version) + "/subnets").then(function (rows) {
+        if (seq !== reqSeq) return;
         state.subnets = rows;
         renderList();
         if (state.selectedId != null && !rows.some(function (s) { return s.id === state.selectedId; })) {
@@ -131,9 +138,10 @@
         }
         renderDetail();
       }).catch(function (e) {
+        if (seq !== reqSeq) return;
         U.clear(listBody);
         listBody.appendChild(h("tr", null, h("td", { colspan: colCount(), class: "table-empty" }, "Could not load subnets.")));
-        window.toast.error(e.message, "DHCPv" + state.version);
+        window.toast.error(e.message, "DHCPv" + version);
       });
     }
 
@@ -354,10 +362,18 @@
       req.then(function (created) {
         window.toast.success((isNew ? "Subnet created: " : "Subnet updated: ") + payload.subnet);
         var newId = created && created.id;
-        api.get(base(state.version) + "/subnets").then(function (rows) {
+        // The save itself already succeeded. If this follow-up refresh fails we
+        // must still restore the button -- renderDetail() is what would normally
+        // rebuild it, so without this the Save button stays spinning forever and
+        // the only way out is to leave and re-enter the view.
+        return api.get(base(state.version) + "/subnets").then(function (rows) {
           state.subnets = rows;
           if (isNew && newId != null) { state.mode = "edit"; state.selectedId = newId; }
           renderList(); renderDetail();
+        }).catch(function (e) {
+          btn.disabled = false; btn.textContent = label;
+          window.toast.error("Saved, but the subnet list could not be refreshed: " + e.message,
+            "DHCPv" + state.version);
         });
       }).catch(function (e) {
         errEl.textContent = e.message; btn.disabled = false; btn.textContent = label;

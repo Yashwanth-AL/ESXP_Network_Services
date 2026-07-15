@@ -40,20 +40,32 @@
   }
 
   function showLogin() {
+    // Tear down the current view's timers/listeners first. Without this an
+    // expired session leaves e.g. the Leases 5s poll running, which 401s again
+    // and again -- each one re-toasting and re-rendering the login screen.
+    runCleanups();
     stopStatus();
     App.user = null;
     App.renderLogin(function (u) { App.user = u; startApp(); });
   }
 
   function startApp() {
-    if (!location.hash || !ROUTES[currentPath()]) location.hash = "#" + DEFAULT_ROUTE;
     renderShell();
     startStatus();
-    routeChanged();
+    if (!location.hash || !ROUTES[currentPath()]) {
+      // Assigning the hash fires `hashchange`, which routes for us -- calling
+      // routeChanged() here as well would fetch every view's data twice.
+      location.hash = "#" + DEFAULT_ROUTE;
+    } else {
+      routeChanged();
+    }
     if (App.user && App.user.must_change_password) showChangePasswordBanner();
   }
 
   window.addEventListener("app:unauthorized", function () {
+    // Requests already in flight when the session dropped will each fire this;
+    // only the first one should tear down and toast.
+    if (!App.user) return;
     window.toast && window.toast.error("Your session has expired. Please sign in again.", "Signed out");
     showLogin();
   });
@@ -99,7 +111,7 @@
     var active = currentPath() === path;
     var cls = "nav-item" + (opts.sub ? " sub" : "") + (active ? " active" : "");
     var children = [];
-    if (iconKey) children.push(h("span", { html: U.icon(ICON[iconKey]) }));
+    if (iconKey) children.push(h("span", { unsafeHTML: U.icon(ICON[iconKey]) }));
     children.push(h("span", null, label));
     if (opts.badge) children.push(h("span", { class: "nav-badge" }, opts.badge));
     return h("div", { class: cls, onClick: function () { location.hash = "#" + path; } }, children);

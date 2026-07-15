@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import audit, kea_client, kea_config
+from .. import audit, kea_client, kea_config, ops
 from ..auth import current_user
 from ..models import Reservation4Request, Subnet4Request
 from ..validation import (
-    ValidationError, address_in_network, normalize_cidr, validate_dns_servers,
+    address_in_network, normalize_cidr, validate_dns_servers,
     validate_hostname, validate_mac, validate_pool, validate_timers,
 )
 
@@ -73,18 +73,20 @@ async def list_subnets(user: str = Depends(current_user)):
 
 @router.post("/subnets", status_code=201)
 async def create_subnet(body: Subnet4Request, user: str = Depends(current_user)):
-    config, subnet, v = await _build_candidate(body, None)
-    await kea_client.apply_config(SERVICE, config)
-    audit.record(user, "config", "dhcp4.subnet.create", "success", v["cidr"])
-    return kea_config.subnet4_to_api(subnet)
+    async with kea_client.config_lock(SERVICE):
+        config, subnet, v = await _build_candidate(body, None)
+        await ops.apply_and_audit(SERVICE, config, user=user,
+                                  action="dhcp4.subnet.create", detail=v["cidr"])
+        return kea_config.subnet4_to_api(subnet)
 
 
 @router.put("/subnets/{subnet_id}")
 async def update_subnet(subnet_id: int, body: Subnet4Request, user: str = Depends(current_user)):
-    config, subnet, v = await _build_candidate(body, subnet_id)
-    await kea_client.apply_config(SERVICE, config)
-    audit.record(user, "config", "dhcp4.subnet.update", "success", v["cidr"])
-    return kea_config.subnet4_to_api(subnet)
+    async with kea_client.config_lock(SERVICE):
+        config, subnet, v = await _build_candidate(body, subnet_id)
+        await ops.apply_and_audit(SERVICE, config, user=user,
+                                  action="dhcp4.subnet.update", detail=v["cidr"])
+        return kea_config.subnet4_to_api(subnet)
 
 
 @router.post("/subnets/verify")
@@ -94,9 +96,9 @@ async def verify_new_subnet(body: Subnet4Request, user: str = Depends(current_us
     try:
         await kea_client.config_test(SERVICE, config)
     except kea_client.KeaError as exc:
-        audit.record(user, "config", "dhcp4.subnet.verify", "failure", exc.message)
+        await audit.arecord(user, "config", "dhcp4.subnet.verify", "failure", exc.message)
         return {"ok": False, "message": exc.message}
-    audit.record(user, "config", "dhcp4.subnet.verify", "success", v["cidr"])
+    await audit.arecord(user, "config", "dhcp4.subnet.verify", "success", v["cidr"])
     return {"ok": True, "message": "Configuration is valid."}
 
 
@@ -108,22 +110,27 @@ async def verify_existing_subnet(subnet_id: int, body: Subnet4Request,
     try:
         await kea_client.config_test(SERVICE, config)
     except kea_client.KeaError as exc:
-        audit.record(user, "config", "dhcp4.subnet.verify", "failure", exc.message)
+        await audit.arecord(user, "config", "dhcp4.subnet.verify", "failure", exc.message)
         return {"ok": False, "message": exc.message}
-    audit.record(user, "config", "dhcp4.subnet.verify", "success", v["cidr"])
+    await audit.arecord(user, "config", "dhcp4.subnet.verify", "success", v["cidr"])
     return {"ok": True, "message": "Configuration is valid."}
 
 
 @router.delete("/subnets/{subnet_id}")
 async def delete_subnet(subnet_id: int, user: str = Depends(current_user)):
-    config = await kea_client.config_get(SERVICE)
-    subnet = _require_subnet(config, subnet_id)
-    cidr = subnet.get("subnet", "")
-    subnets = kea_config.subnet_list(config, SERVICE)
-    subnets[:] = [s for s in subnets if s.get("id") != subnet_id]
-    await kea_client.apply_config(SERVICE, config)
-    audit.record(user, "config", "dhcp4.subnet.delete", "success", cidr)
-    return {"ok": True}
+    async with kea_client.config_lock(SERVICE):
+        config = await kea_client.config_get(SERVICE)
+        subnet = _require_subnet(config, subnet_id)
+        cidr = subnet.get("subnet", "")
+        # Drop this subnet's leases before its id can be recycled by the next
+        # subnet created (best-effort; never blocks the delete).
+        await ops.wipe_subnet_leases(SERVICE, subnet_id, user=user,
+                                     action="dhcp4.subnet.delete")
+        subnets = kea_config.subnet_list(config, SERVICE)
+        subnets[:] = [s for s in subnets if s.get("id") != subnet_id]
+        await ops.apply_and_audit(SERVICE, config, user=user,
+                                  action="dhcp4.subnet.delete", detail=cidr)
+        return {"ok": True}
 
 
 # --- reservations ------------------------------------------------------------
@@ -138,22 +145,24 @@ async def list_reservations(subnet_id: int, user: str = Depends(current_user)):
 @router.post("/subnets/{subnet_id}/reservations", status_code=201)
 async def add_reservation(subnet_id: int, body: Reservation4Request,
                           user: str = Depends(current_user)):
-    config = await kea_client.config_get(SERVICE)
-    subnet = _require_subnet(config, subnet_id)
-    mac = validate_mac(body.mac)
-    address_in_network(body.ip, subnet["subnet"], 4)
-    hostname = validate_hostname(body.hostname)
-    reservations = subnet.setdefault("reservations", [])
-    for r in reservations:
-        if r.get("hw-address", "").lower() == mac:
-            raise HTTPException(status_code=409, detail=f"MAC {mac} already reserved")
-        if r.get("ip-address") == body.ip:
-            raise HTTPException(status_code=409, detail=f"IP {body.ip} already reserved")
-    new_res = kea_config.build_reservation4(mac, body.ip, hostname)
-    reservations.append(new_res)
-    await kea_client.apply_config(SERVICE, config)
-    audit.record(user, "config", "dhcp4.reservation.create", "success", f"{mac} -> {body.ip}")
-    return kea_config.reservation4_to_api(new_res)
+    async with kea_client.config_lock(SERVICE):
+        config = await kea_client.config_get(SERVICE)
+        subnet = _require_subnet(config, subnet_id)
+        mac = validate_mac(body.mac)
+        address_in_network(body.ip, subnet["subnet"], 4)
+        hostname = validate_hostname(body.hostname)
+        reservations = subnet.setdefault("reservations", [])
+        for r in reservations:
+            if r.get("hw-address", "").lower() == mac:
+                raise HTTPException(status_code=409, detail=f"MAC {mac} already reserved")
+            if r.get("ip-address") == body.ip:
+                raise HTTPException(status_code=409, detail=f"IP {body.ip} already reserved")
+        new_res = kea_config.build_reservation4(mac, body.ip, hostname)
+        reservations.append(new_res)
+        await ops.apply_and_audit(SERVICE, config, user=user,
+                                  action="dhcp4.reservation.create",
+                                  detail=f"{mac} -> {body.ip}")
+        return kea_config.reservation4_to_api(new_res)
 
 
 @router.put("/subnets/{subnet_id}/reservations/{mac}")
@@ -161,38 +170,41 @@ async def update_reservation(subnet_id: int, mac: str, body: Reservation4Request
                              user: str = Depends(current_user)):
     key = validate_mac(mac)
     new_mac = validate_mac(body.mac)
-    config = await kea_client.config_get(SERVICE)
-    subnet = _require_subnet(config, subnet_id)
-    address_in_network(body.ip, subnet["subnet"], 4)
-    hostname = validate_hostname(body.hostname)
-    reservations = subnet.get("reservations", [])
-    target = next((r for r in reservations if r.get("hw-address", "").lower() == key), None)
-    if target is None:
-        raise HTTPException(status_code=404, detail=f"Reservation {mac} not found")
-    for r in reservations:
-        if r is target:
-            continue
-        if r.get("hw-address", "").lower() == new_mac:
-            raise HTTPException(status_code=409, detail=f"MAC {new_mac} already reserved")
-        if r.get("ip-address") == body.ip:
-            raise HTTPException(status_code=409, detail=f"IP {body.ip} already reserved")
-    target.clear()
-    target.update(kea_config.build_reservation4(new_mac, body.ip, hostname))
-    await kea_client.apply_config(SERVICE, config)
-    audit.record(user, "config", "dhcp4.reservation.update", "success", f"{new_mac} -> {body.ip}")
-    return kea_config.reservation4_to_api(target)
+    async with kea_client.config_lock(SERVICE):
+        config = await kea_client.config_get(SERVICE)
+        subnet = _require_subnet(config, subnet_id)
+        address_in_network(body.ip, subnet["subnet"], 4)
+        hostname = validate_hostname(body.hostname)
+        reservations = subnet.get("reservations", [])
+        target = next((r for r in reservations if r.get("hw-address", "").lower() == key), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Reservation {mac} not found")
+        for r in reservations:
+            if r is target:
+                continue
+            if r.get("hw-address", "").lower() == new_mac:
+                raise HTTPException(status_code=409, detail=f"MAC {new_mac} already reserved")
+            if r.get("ip-address") == body.ip:
+                raise HTTPException(status_code=409, detail=f"IP {body.ip} already reserved")
+        target.clear()
+        target.update(kea_config.build_reservation4(new_mac, body.ip, hostname))
+        await ops.apply_and_audit(SERVICE, config, user=user,
+                                  action="dhcp4.reservation.update",
+                                  detail=f"{new_mac} -> {body.ip}")
+        return kea_config.reservation4_to_api(target)
 
 
 @router.delete("/subnets/{subnet_id}/reservations/{mac}")
 async def delete_reservation(subnet_id: int, mac: str, user: str = Depends(current_user)):
     key = validate_mac(mac)
-    config = await kea_client.config_get(SERVICE)
-    subnet = _require_subnet(config, subnet_id)
-    reservations = subnet.get("reservations", [])
-    new_list = [r for r in reservations if r.get("hw-address", "").lower() != key]
-    if len(new_list) == len(reservations):
-        raise HTTPException(status_code=404, detail=f"Reservation {mac} not found")
-    subnet["reservations"] = new_list
-    await kea_client.apply_config(SERVICE, config)
-    audit.record(user, "config", "dhcp4.reservation.delete", "success", key)
-    return {"ok": True}
+    async with kea_client.config_lock(SERVICE):
+        config = await kea_client.config_get(SERVICE)
+        subnet = _require_subnet(config, subnet_id)
+        reservations = subnet.get("reservations", [])
+        new_list = [r for r in reservations if r.get("hw-address", "").lower() != key]
+        if len(new_list) == len(reservations):
+            raise HTTPException(status_code=404, detail=f"Reservation {mac} not found")
+        subnet["reservations"] = new_list
+        await ops.apply_and_audit(SERVICE, config, user=user,
+                                  action="dhcp4.reservation.delete", detail=key)
+        return {"ok": True}
