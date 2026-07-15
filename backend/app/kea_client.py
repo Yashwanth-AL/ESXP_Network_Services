@@ -138,7 +138,22 @@ async def apply_config(service: str, config: dict[str, Any]) -> None:
     """
     await config_test(service, config)
     await config_set(service, config)
-    await config_write(service)
+    try:
+        await config_write(service)
+    except KeaError as exc:
+        # The change is now live in the running server but could not be written
+        # to disk, so it will be lost on the next reload/restart. Kea's raw text
+        # here is just "Unable to open file ... for writing"; translate it into
+        # something the operator can act on.
+        raise KeaError(
+            "The change was applied to the running server but could NOT be saved "
+            "to disk, so it will be lost when Kea restarts. Kea cannot write to "
+            "its config directory. On Debian/Ubuntu this is the "
+            "ProtectSystem=strict sandbox on the Kea service -- run "
+            "install/repair-kea.sh (it adds ReadWritePaths=/etc/kea and fixes "
+            f"file ownership). Kea reported: {exc.message}",
+            result=exc.result,
+        )
 
 
 # --- Status ------------------------------------------------------------------

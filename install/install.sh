@@ -25,12 +25,9 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# --- pretty logging ----------------------------------------------------------
-c_g="\033[1;32m"; c_y="\033[1;33m"; c_r="\033[1;31m"; c_b="\033[1;34m"; c_0="\033[0m"
-log()  { echo -e "${c_b}[*]${c_0} $*"; }
-ok()   { echo -e "${c_g}[+]${c_0} $*"; }
-warn() { echo -e "${c_y}[!]${c_0} $*"; }
-die()  { echo -e "${c_r}[x]${c_0} $*" >&2; exit 1; }
+# Shared logging + Kea detection/repair helpers.
+# shellcheck source=install/lib-kea.sh
+source "${SCRIPT_DIR}/lib-kea.sh"
 
 [[ "${EUID}" -eq 0 ]] || die "Please run as root (sudo ./install/install.sh)."
 [[ -d "${SRC_ROOT}/backend" && -d "${SRC_ROOT}/frontend" ]] \
@@ -66,22 +63,12 @@ install_packages() {
 }
 
 # --- 2. detect kea service unit names + kea user ----------------------------
-detect_unit() {                       # $1 = base name (kea-dhcp4 / kea-dhcp6)
-  local base="$1" u
-  for u in "${base}-server" "${base}"; do
-    if systemctl list-unit-files 2>/dev/null | grep -q "^${u}\.service"; then echo "${u}"; return; fi
-  done
-  echo "${base}-server"
-}
-detect_kea_user() {
-  local u
-  for u in _kea kea dhcpd; do id "${u}" >/dev/null 2>&1 && { echo "${u}"; return; }; done
-  echo root
-}
+# detect_unit / detect_kea_user / detect_hooks_dir / inject_lease_hook /
+# write_kea_conf_dropins are provided by install/lib-kea.sh (sourced above).
 
 # --- 3. lay down Kea configuration ------------------------------------------
 configure_kea() {
-  local kea_user kea_group
+  local kea_user kea_group hooks_dir dhcp4_unit dhcp6_unit
   kea_user="$(detect_kea_user)"
   kea_group="$(id -gn "${kea_user}" 2>/dev/null || echo "${kea_user}")"
   log "Kea runs as user '${kea_user}:${kea_group}'."
@@ -95,13 +82,31 @@ d /run/kea 0750 ${kea_user} ${kea_group} -
 EOF
   systemd-tmpfiles --create /etc/tmpfiles.d/${APP_NAME}-kea.conf >/dev/null 2>&1 || true
 
+  # Active Leases needs the lease_cmds hook (lease4-get-all, lease6-del, ...).
+  hooks_dir="$(detect_hooks_dir)"
+  if [[ -n "${hooks_dir}" ]]; then
+    log "lease_cmds hook found in ${hooks_dir} (enables Active Leases)."
+  else
+    warn "libdhcp_lease_cmds.so not found -- the Active Leases page will be unavailable until Kea's hook libraries are installed."
+  fi
+
   local ts; ts="$(date +%Y%m%d-%H%M%S)"
   for f in kea-dhcp4.conf kea-dhcp6.conf kea-ctrl-agent.conf; do
     [[ -f "${KEA_CONF_DIR}/${f}" ]] && cp -a "${KEA_CONF_DIR}/${f}" "${KEA_CONF_DIR}/${f}.bak-${ts}"
     install -m 0640 "${SRC_ROOT}/install/kea/${f}" "${KEA_CONF_DIR}/${f}"
+    case "${f}" in
+      kea-dhcp4.conf|kea-dhcp6.conf) inject_lease_hook "${KEA_CONF_DIR}/${f}" "${hooks_dir}" ;;
+    esac
     # Kea daemons (running as kea_user) must be able to config-write these.
     chown "${kea_user}:${kea_group}" "${KEA_CONF_DIR}/${f}"
   done
+
+  # Let config-write reach /etc/kea even under ProtectSystem=strict, otherwise
+  # saved subnets live only in memory and vanish on the next Kea reload.
+  dhcp4_unit="$(detect_unit kea-dhcp4)"
+  dhcp6_unit="$(detect_unit kea-dhcp6)"
+  write_kea_conf_dropins "${dhcp4_unit}" "${dhcp6_unit}"
+
   ok "Kea configuration written to ${KEA_CONF_DIR} (backups: *.bak-${ts})."
 }
 

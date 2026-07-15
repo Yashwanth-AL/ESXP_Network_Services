@@ -186,6 +186,8 @@ Kea packages are intentionally left installed.
 .
 ├── install/
 │   ├── install.sh            # one-shot installer
+│   ├── lib-kea.sh            # shared Kea detection/repair helpers (sourced)
+│   ├── repair-kea.sh         # fix config-write + lease hook on an existing install
 │   ├── update.sh             # pulls from REPO_URL in .env
 │   ├── uninstall.sh
 │   └── kea/                  # Kea config templates (control sockets wired)
@@ -241,6 +243,16 @@ public internet.
 - **Dashboard won’t start.** `journalctl -u esxp-dashboard -e`.
 - **A save fails validation.** The toast shows Kea’s `config-test` message
   verbatim — fix the reported field and retry.
+- **“Unable to open file /etc/kea/…conf for writing”, or saved subnets vanish
+  after a refresh.** Kea can’t persist `config-write` to `/etc/kea`. On
+  Debian/Ubuntu the packaged Kea units run with `ProtectSystem=strict`, which
+  makes `/etc` read-only to the daemon — so a subnet is applied to the running
+  server but never written to disk, and is lost on the next reload. Fix an
+  existing install with `sudo ./install/repair-kea.sh` (adds a systemd drop-in
+  with `ReadWritePaths=/etc/kea` and fixes config-file ownership).
+- **“‘lease4-get-all’ command not supported” / Active Leases is empty.** Kea’s
+  `lease_cmds` hook library isn’t loaded. `sudo ./install/repair-kea.sh` locates
+  `libdhcp_lease_cmds.so` and adds it to `hooks-libraries` in both DHCP configs.
 - **Service unit names differ.** They’re auto-detected and stored in `.env`
   (`KEA_*_SERVICE`); edit there if your distro differs.
 
