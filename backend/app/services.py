@@ -21,8 +21,11 @@ def list_interfaces() -> list[str]:
     """Names of this host's network interfaces (for the listen-interface picker).
 
     The dashboard runs on the same box as Kea, so these are exactly the
-    interfaces Kea can bind to. Loopback is excluded -- serving DHCP on it is
-    never what the operator wants.
+    interfaces Kea can bind to. Returns only real/physical interfaces (eth*, en*,
+    wlan*, vlan*, bond*, etc.) -- synthetic/virtual ones (docker, br-, veth-,
+    virbr, lo) are filtered out to keep the picker clean. If an operator needs
+    a non-standard interface, the text-input escape hatch in the UI lets them
+    enter it manually.
     """
     names: list[str] = []
     try:
@@ -34,7 +37,25 @@ def list_interfaces() -> list[str]:
             names = os.listdir("/sys/class/net")
         except OSError:
             names = []
-    return sorted({n for n in names if n and n != "lo"})
+
+    # Real device patterns: eth*, en*, wlan*, vlan*, bond*, tun*, tap*, wg*, etc.
+    # Exclude: loopback, docker, br-*, veth-*, virbr*, dummy, etc.
+    real_starts = ("eth", "en", "wlan", "vlan", "bond", "tun", "tap", "wg", "ppp", "lo")
+    synthetic = ("docker", "br-", "veth-", "virbr", "dummy", "sit")
+
+    result = []
+    for n in names:
+        if not n:
+            continue
+        # Include if starts with a real pattern
+        if not any(n.startswith(p) for p in real_starts):
+            continue
+        # Exclude synthetic ones
+        if any(syn in n for syn in synthetic):
+            continue
+        result.append(n)
+
+    return sorted(set(result))
 
 
 class ServiceError(Exception):
