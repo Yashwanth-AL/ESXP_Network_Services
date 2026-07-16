@@ -73,6 +73,7 @@
 
     var listBody = h("tbody"); // persists across renderShell() calls; repopulated by renderList()
     var detailWrap = h("div"); // holds the config card + reservations card, stacked full-width
+    var listenWrap = h("div"); // holds the "listen interfaces" card, refreshed per tab
 
     function tabButton(v, label) {
       return h("div", {
@@ -106,8 +107,10 @@
       container.appendChild(
         h("div", { class: "tabs" }, tabButton(4, "IPv4"), tabButton(6, "IPv6")));
 
+      container.appendChild(listenWrap);
+
       container.appendChild(
-        h("div", { class: "card" },
+        h("div", { class: "card", style: "margin-top:18px" },
           h("div", { class: "card-head" },
             h("h3", null, "Subnets"),
             h("div", { class: "actions" },
@@ -118,6 +121,98 @@
       container.appendChild(detailWrap);
       renderList();
       renderDetail();
+      loadListen();
+    }
+
+    // --- listen interfaces (Kea interfaces-config for the current family) -----
+    function loadListen() {
+      U.clear(listenWrap);
+      listenWrap.appendChild(h("div", { class: "card" },
+        h("div", { class: "card-body center-load" },
+          h("span", { class: "spin spin-dark" }), "Loading interfaces…")));
+      var version = state.version;
+      Promise.all([
+        api.get("/system/interfaces"),
+        api.get("/system/listen/" + (version === 4 ? "dhcp4" : "dhcp6"))
+      ]).then(function (res) {
+        if (version !== state.version) return;   // tab changed while loading
+        renderListen(res[0].interfaces || [], res[1].interfaces || []);
+      }).catch(function (e) {
+        if (version !== state.version) return;
+        U.clear(listenWrap);
+        listenWrap.appendChild(h("div", { class: "card" },
+          h("div", { class: "card-body muted" }, "Could not load interfaces: " + e.message)));
+      });
+    }
+
+    function renderListen(available, selected) {
+      var version = state.version;
+      var allChecked = selected.indexOf("*") !== -1;
+      var chosen = {};
+      selected.forEach(function (i) { if (i !== "*") chosen[i] = true; });
+
+      var status = h("div", { class: "err-text", style: "min-height:0" });
+      var boxes = [];
+
+      var allBox = h("input", { type: "checkbox", class: "chk" });
+      allBox.checked = allChecked;
+
+      function syncDisabled() {
+        boxes.forEach(function (b) { b.disabled = allBox.checked; });
+      }
+      allBox.addEventListener("change", syncDisabled);
+
+      var grid = h("div", { class: "iface-grid" });
+      if (!available.length) {
+        grid.appendChild(h("div", { class: "muted", style: "font-size:12.5px" },
+          "No interfaces detected on this host. Use “All interfaces” below."));
+      }
+      available.forEach(function (name) {
+        var cb = h("input", { type: "checkbox", class: "chk" });
+        cb.checked = !!chosen[name];
+        boxes.push(cb);
+        grid.appendChild(h("label", { class: "iface-item" }, cb, h("span", null, name)));
+      });
+      syncDisabled();
+
+      var saveBtn = h("button", { class: "btn btn-primary btn-sm" },
+        "Save listen interfaces");
+      saveBtn.addEventListener("click", function () {
+        var picked = allBox.checked
+          ? ["*"]
+          : available.filter(function (name, i) { return boxes[i].checked; });
+        if (!picked.length) { status.textContent = "Select at least one interface, or “All interfaces”."; return; }
+        var label = saveBtn.textContent; saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spin"></span>';
+        api.put("/system/listen/" + (version === 4 ? "dhcp4" : "dhcp6"), { interfaces: picked })
+          .then(function (res) {
+            var where = res.saved_to ? " — saved to " + res.saved_to : "";
+            window.toast.success("Now listening on: " + res.interfaces.join(", ") + where,
+              "Listen interfaces");
+            renderListen(available, res.interfaces);
+          })
+          .catch(function (e) {
+            saveBtn.disabled = false; saveBtn.textContent = label;
+            status.textContent = e.message;
+            window.toast.error(e.message, "Listen interfaces");
+          });
+      });
+
+      U.clear(listenWrap);
+      listenWrap.appendChild(h("div", { class: "card" },
+        h("div", { class: "card-head" },
+          h("h3", null, "Listen interfaces"),
+          h("div", { class: "sub", style: "margin-left:auto" },
+            "Which NICs the DHCPv" + version + " server binds to")),
+        h("div", { class: "card-body" },
+          h("label", { class: "iface-item", style: "margin-bottom:8px" },
+            allBox, h("span", null, h("strong", null, "All interfaces"),
+              " ", h("span", { class: "muted" }, "(listen on every NIC — “*”)"))),
+          grid,
+          status,
+          h("div", { class: "form-actions", style: "margin-top:14px" }, saveBtn),
+          h("div", { class: "hint", style: "margin-top:8px" },
+            "A change here is applied and saved to Kea's config. If the server does not pick up a new interface, restart it from Settings."))));
     }
 
     function loadSubnets() {
@@ -377,7 +472,14 @@
         ? api.post(base(version) + "/subnets", payload)
         : api.put(base(version) + "/subnets/" + state.selectedId, payload);
       req.then(function (created) {
-        window.toast.success((isNew ? "Subnet created: " : "Subnet updated: ") + payload.subnet);
+        // Confirm persistence, not just that the request returned: saved_to is
+        // the file Kea's config-write wrote, so the operator can see the change
+        // actually reached disk.
+        var savedTo = created && created.saved_to;
+        window.toast.success(
+          (isNew ? "Subnet created: " : "Subnet updated: ") + payload.subnet +
+          (savedTo ? " — saved to " + savedTo : ""),
+          "Saved");
         var newId = created && created.id;
         // The save itself already succeeded. If this follow-up refresh fails we
         // must still restore the button -- renderDetail() is what would normally

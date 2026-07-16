@@ -34,6 +34,20 @@ def next_subnet_id(config: dict[str, Any], service: str) -> int:
     return (max(ids) + 1) if ids else 1
 
 
+def get_interfaces(config: dict[str, Any], service: str) -> list[str]:
+    """The interfaces the daemon is configured to listen on (``["*"]`` = all)."""
+    root = config[ROOT[service]]
+    return list(root.get("interfaces-config", {}).get("interfaces", []))
+
+
+def set_interfaces(config: dict[str, Any], service: str, interfaces: list[str]) -> None:
+    """Replace only the ``interfaces`` list, leaving the rest of
+    ``interfaces-config`` (socket type, service sockets, etc.) untouched."""
+    root = config[ROOT[service]]
+    ic = root.setdefault("interfaces-config", {})
+    ic["interfaces"] = interfaces
+
+
 def find_subnet(config: dict[str, Any], service: str, subnet_id: int) -> dict[str, Any] | None:
     for s in subnet_list(config, service):
         if s.get("id") == subnet_id:

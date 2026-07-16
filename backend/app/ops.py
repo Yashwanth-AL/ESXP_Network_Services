@@ -9,20 +9,24 @@ from . import audit, kea_client
 
 
 async def apply_and_audit(service: str, config: dict, *, user: str, action: str,
-                          detail: str) -> None:
+                          detail: str) -> str:
     """Apply a candidate config, recording the outcome either way.
 
     Mirrors the pattern already used in routers/system.py: a *failure* has to
     leave an audit trail too. Without this, a config-write error -- which leaves
     the change live in Kea but unpersisted -- would surface as a 502 and vanish
     from the audit log entirely, so nobody could tell the change had happened.
+
+    Returns the file the config was written to, so the caller can confirm to the
+    operator that the change was persisted (not just applied in memory).
     """
     try:
-        await kea_client.apply_config(service, config)
+        saved_to = await kea_client.apply_config(service, config)
     except kea_client.KeaError as exc:
         await audit.arecord(user, "config", action, "failure", exc.message)
         raise
     await audit.arecord(user, "config", action, "success", detail)
+    return saved_to
 
 
 async def wipe_subnet_leases(service: str, subnet_id: int, *, user: str) -> None:

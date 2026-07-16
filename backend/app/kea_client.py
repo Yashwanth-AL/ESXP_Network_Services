@@ -147,17 +147,19 @@ async def config_reload(service: str) -> None:
     await command("config-reload", service)
 
 
-async def apply_config(service: str, config: dict[str, Any]) -> None:
+async def apply_config(service: str, config: dict[str, Any]) -> str:
     """Full safe-apply pipeline: test -> set -> write.
 
     config-test is the gate that rejects a bad configuration *before* it can be
     pushed to the live server, satisfying the "validate before apply"
-    requirement. config-write then persists it so it survives a restart.
+    requirement. config-write then persists it so it survives a restart, and its
+    filename is returned so callers can confirm to the operator exactly where
+    the change was saved.
     """
     await config_test(service, config)
     await config_set(service, config)
     try:
-        await config_write(service)
+        return await config_write(service)
     except KeaError as exc:
         # The change is now live in the running server but could not be written
         # to disk, so it will be lost on the next reload/restart. Whatever the

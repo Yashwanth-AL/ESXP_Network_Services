@@ -262,6 +262,11 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 .duration-row input { flex: 1; min-width: 0; }
 .duration-row select { flex: none; width: 112px; }
 
+/* --- Listen-interface picker ------------------------------------------------- */
+.iface-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 14px; }
+.iface-item { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; user-select: none; }
+.iface-item .chk { flex: none; }
+
 /* --- Badges ----------------------------------------------------------------- */
 .badge {
   display: inline-block; padding: 2px 9px; border-radius: 11px;

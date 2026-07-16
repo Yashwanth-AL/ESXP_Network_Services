@@ -10,6 +10,11 @@ DHCP is the first module of a broader **Network Services** tool; **DNS** and
 **NTP/SNTP** are present as routed “Coming soon” placeholders so they can be
 filled in later without restructuring the app.
 
+> **Just want to get it running?** See **[GETTING-STARTED.md](GETTING-STARTED.md)**
+> for a simple, step-by-step guide. In short, on a Linux server:
+> `git clone … && cd ESXP_Network_Services && sudo ./run.sh`. Run the same
+> `sudo ./run.sh` again later to pull updates.
+
 ---
 
 ## Highlights
@@ -120,12 +125,17 @@ Open: `http://<server-ip>:8080/`
 ## Using the dashboard
 
 - **DHCP → Configuration** — IPv4 / IPv6 tabs, two-pane subnet editor.
+  - **Listen interfaces** — a card at the top of each tab lets you pick which
+    host NICs the daemon binds to (the list of ports is read live from the
+    server), or “All interfaces” (`*`). Writes Kea’s `interfaces-config`.
   - *Left:* list of subnets. *Right:* the selected subnet’s settings
     (CIDR, pool, mask/gateway (v4), DNS, lifetimes/timers) and, below it, a
     **reservations** table with add / edit / delete (MAC + IP + hostname for v4,
     DUID + IPv6 + hostname for v6).
   - Saving a subnet or reservation runs `config-test` → `config-set` →
-    `config-write` automatically, so changes are validated and persisted.
+    `config-write` automatically, so changes are validated and persisted. The
+    success toast names the file it was written to, confirming the change
+    reached disk (not just memory).
 - **DHCP → Active Leases** — live table (auto-refresh every 5 s), search, and
   **Renew** / **Release** per row plus bulk release.
 - **DHCP → Settings** — start / stop / restart / reload each Kea service,
@@ -184,6 +194,8 @@ Kea packages are intentionally left installed.
 
 ```
 .
+├── run.sh                    # one command: install on a fresh box, else update
+├── GETTING-STARTED.md        # simple step-by-step guide
 ├── install/
 │   ├── install.sh            # one-shot installer
 │   ├── lib-kea.sh            # shared Kea detection/repair helpers (sourced)

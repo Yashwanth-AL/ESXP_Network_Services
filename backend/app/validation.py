@@ -130,3 +130,31 @@ def validate_dns_servers(servers: list[str], version: int) -> list[str]:
         parse_address(s, version)
         out.append(s)
     return out
+
+
+# --- Listen interfaces -------------------------------------------------------
+
+def validate_interfaces(requested: list[str], available: list[str]) -> list[str]:
+    """Normalise a listen-interface selection.
+
+    ``"*"`` means "all interfaces" and cannot be combined with specific names.
+    When we could enumerate the host's interfaces, every requested name must be
+    one of them (catching typos before Kea silently fails to bind); if we could
+    not enumerate them (``available`` empty), names pass through and Kea's
+    config-test remains the backstop. At least one interface is required.
+    """
+    clean, seen = [], set()
+    for i in requested or []:
+        i = (i or "").strip()
+        if i and i not in seen:
+            seen.add(i)
+            clean.append(i)
+    if not clean:
+        _fail("Select at least one interface (or '*' for all).")
+    if "*" in clean:
+        return ["*"]
+    if available:
+        for i in clean:
+            if i not in available:
+                _fail(f"'{i}' is not a network interface on this host")
+    return clean

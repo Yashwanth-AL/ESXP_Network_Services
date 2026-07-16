@@ -74,18 +74,18 @@ async def list_subnets(user: str = Depends(current_user)):
 async def create_subnet(body: Subnet6Request, user: str = Depends(current_user)):
     async with kea_client.config_lock(SERVICE):
         config, subnet, v = await _build_candidate(body, None)
-        await ops.apply_and_audit(SERVICE, config, user=user,
-                                  action="dhcp6.subnet.create", detail=v["cidr"])
-        return kea_config.subnet6_to_api(subnet)
+        saved_to = await ops.apply_and_audit(SERVICE, config, user=user,
+                                             action="dhcp6.subnet.create", detail=v["cidr"])
+        return {**kea_config.subnet6_to_api(subnet), "saved_to": saved_to}
 
 
 @router.put("/subnets/{subnet_id}")
 async def update_subnet(subnet_id: int, body: Subnet6Request, user: str = Depends(current_user)):
     async with kea_client.config_lock(SERVICE):
         config, subnet, v = await _build_candidate(body, subnet_id)
-        await ops.apply_and_audit(SERVICE, config, user=user,
-                                  action="dhcp6.subnet.update", detail=v["cidr"])
-        return kea_config.subnet6_to_api(subnet)
+        saved_to = await ops.apply_and_audit(SERVICE, config, user=user,
+                                             action="dhcp6.subnet.update", detail=v["cidr"])
+        return {**kea_config.subnet6_to_api(subnet), "saved_to": saved_to}
 
 
 @router.post("/subnets/verify")

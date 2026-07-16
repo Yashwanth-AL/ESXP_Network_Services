@@ -7,12 +7,34 @@ internal server; see systemd/esxp-dashboard.service and the README).
 """
 from __future__ import annotations
 
+import os
 import shutil
+import socket
 import subprocess
 
 from .config import settings
 
 ALLOWED_ACTIONS = {"start", "stop", "restart", "reload"}
+
+
+def list_interfaces() -> list[str]:
+    """Names of this host's network interfaces (for the listen-interface picker).
+
+    The dashboard runs on the same box as Kea, so these are exactly the
+    interfaces Kea can bind to. Loopback is excluded -- serving DHCP on it is
+    never what the operator wants.
+    """
+    names: list[str] = []
+    try:
+        names = [name for _, name in socket.if_nameindex()]
+    except (OSError, AttributeError):
+        names = []
+    if not names:
+        try:
+            names = os.listdir("/sys/class/net")
+        except OSError:
+            names = []
+    return sorted({n for n in names if n and n != "lo"})
 
 
 class ServiceError(Exception):

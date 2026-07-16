@@ -6,10 +6,18 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import run_in_threadpool
 
-from .. import audit, kea_client, services
+from .. import audit, kea_client, kea_config, ops, services
 from ..auth import current_user
+from ..models import InterfacesRequest
+from ..validation import validate_interfaces
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+def _service(family: str) -> str:
+    if family not in (kea_client.DHCP4, kea_client.DHCP6):
+        raise HTTPException(status_code=400, detail=f"Unknown service '{family}'")
+    return family
 
 
 @router.get("/health")
@@ -63,3 +71,35 @@ async def service_control(which: str, action: str, user: str = Depends(current_u
 async def audit_log(limit: int = 100, user: str = Depends(current_user)):
     limit = max(1, min(limit, 500))
     return await audit.arecent(limit)
+
+
+# --- listen interfaces -------------------------------------------------------
+# Which host NICs each DHCP daemon binds to (Kea's interfaces-config). Kept here
+# rather than duplicated across the dhcp4/dhcp6 routers.
+
+@router.get("/interfaces")
+async def available_interfaces(user: str = Depends(current_user)):
+    """Network interfaces present on this host, for the listen-interface picker."""
+    return {"interfaces": await run_in_threadpool(services.list_interfaces)}
+
+
+@router.get("/listen/{family}")
+async def get_listen(family: str, user: str = Depends(current_user)):
+    service = _service(family)
+    config = await kea_client.config_get(service)
+    return {"interfaces": kea_config.get_interfaces(config, service)}
+
+
+@router.put("/listen/{family}")
+async def set_listen(family: str, body: InterfacesRequest,
+                     user: str = Depends(current_user)):
+    service = _service(family)
+    available = await run_in_threadpool(services.list_interfaces)
+    interfaces = validate_interfaces(body.interfaces, available)
+    async with kea_client.config_lock(service):
+        config = await kea_client.config_get(service)
+        kea_config.set_interfaces(config, service, interfaces)
+        saved_to = await ops.apply_and_audit(
+            service, config, user=user, action=f"{service}.interfaces.update",
+            detail=", ".join(interfaces))
+    return {"interfaces": interfaces, "saved_to": saved_to}

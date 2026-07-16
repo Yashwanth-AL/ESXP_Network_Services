@@ -46,3 +46,7 @@ class Reservation6Request(BaseModel):
     duid: str
     ip: str
     hostname: str | None = ""
+
+
+class InterfacesRequest(BaseModel):
+    interfaces: list[str] = Field(default_factory=list)
