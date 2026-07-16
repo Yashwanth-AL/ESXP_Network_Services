@@ -16,8 +16,10 @@ data/
 .env
 *.local
 
-# Local dev tooling (machine-specific paths)
-.claude/launch.json
+# Local dev tooling -- Claude Code artifacts stay local, never pushed
+.claude/
+CLAUDE.md
+CLAUDE.local.md
 
 # Logs
 *.log

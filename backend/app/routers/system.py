@@ -79,8 +79,16 @@ async def audit_log(limit: int = 100, user: str = Depends(current_user)):
 
 @router.get("/interfaces")
 async def available_interfaces(user: str = Depends(current_user)):
-    """Network interfaces present on this host, for the listen-interface picker."""
-    return {"interfaces": await run_in_threadpool(services.list_interfaces)}
+    """Network interfaces present on this host, for the listen-interface picker.
+
+    ``interfaces`` is the complete list (what a selection is validated
+    against); ``physical`` is the hardware-backed subset the picker shows by
+    default to stay uncluttered (empty when undetectable, e.g. non-Linux).
+    """
+    def gather():
+        names = services.list_interfaces()
+        return {"interfaces": names, "physical": services.physical_interfaces(names)}
+    return await run_in_threadpool(gather)
 
 
 @router.get("/listen/{family}")
@@ -95,9 +103,12 @@ async def set_listen(family: str, body: InterfacesRequest,
                      user: str = Depends(current_user)):
     service = _service(family)
     available = await run_in_threadpool(services.list_interfaces)
-    interfaces = validate_interfaces(body.interfaces, available)
     async with kea_client.config_lock(service):
         config = await kea_client.config_get(service)
+        # Validated against the FULL host list plus whatever Kea already has
+        # configured, so an active-but-currently-down interface still saves.
+        current = kea_config.get_interfaces(config, service)
+        interfaces = validate_interfaces(body.interfaces, available, current)
         kea_config.set_interfaces(config, service, interfaces)
         saved_to = await ops.apply_and_audit(
             service, config, user=user, action=f"{service}.interfaces.update",

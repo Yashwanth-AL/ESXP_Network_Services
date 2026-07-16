@@ -5,7 +5,8 @@
   "use strict";
   var h = window.h, U = window.U, V = window.V, api = window.api;
 
-  function base(version) { return version === 4 ? "/dhcp4" : "/dhcp6"; }
+  function fam(version) { return version === 4 ? "dhcp4" : "dhcp6"; }
+  function base(version) { return "/" + fam(version); }
 
   function netmaskFromCidr(cidrStr) {
     var slash = String(cidrStr).split("/");
@@ -125,18 +126,23 @@
     }
 
     // --- listen interfaces (Kea interfaces-config for the current family) -----
+    var ifaceInfo = null; // {all: [...], physical: [...]} -- host NICs don't change per family, fetch once per view
+
     function loadListen() {
       U.clear(listenWrap);
       listenWrap.appendChild(h("div", { class: "card" },
         h("div", { class: "card-body center-load" },
           h("span", { class: "spin spin-dark" }), "Loading interfaces…")));
       var version = state.version;
-      Promise.all([
-        api.get("/system/interfaces"),
-        api.get("/system/listen/" + (version === 4 ? "dhcp4" : "dhcp6"))
-      ]).then(function (res) {
+      var infoReq = ifaceInfo
+        ? Promise.resolve(ifaceInfo)
+        : api.get("/system/interfaces").then(function (r) {
+            ifaceInfo = { all: r.interfaces || [], physical: r.physical || [] };
+            return ifaceInfo;
+          });
+      Promise.all([infoReq, api.get("/system/listen/" + fam(version))]).then(function (res) {
         if (version !== state.version) return;   // tab changed while loading
-        renderListen(res[0].interfaces || [], res[1].interfaces || []);
+        renderListen(res[0], res[1].interfaces || [], false);
       }).catch(function (e) {
         if (version !== state.version) return;
         U.clear(listenWrap);
@@ -145,51 +151,78 @@
       });
     }
 
-    function renderListen(available, selected) {
+    function renderListen(info, selected, showAll) {
       var version = state.version;
       var allChecked = selected.indexOf("*") !== -1;
       var chosen = {};
       selected.forEach(function (i) { if (i !== "*") chosen[i] = true; });
 
+      // Show physical NICs by default so the picker stays uncluttered; the
+      // toggle reveals everything (bridges, vlans, tunnels). Anything in the
+      // CURRENT selection is always shown regardless -- hiding an active
+      // binding here would silently drop it on the next save.
+      var compact = !showAll && info.physical.length > 0;
+      var display = (compact ? info.physical : info.all).slice();
+      Object.keys(chosen).forEach(function (name) {
+        if (display.indexOf(name) === -1) display.push(name);
+      });
+      display.sort();
+
       var status = h("div", { class: "err-text", style: "min-height:0" });
-      var boxes = [];
+      var byName = {}; // interface name -> its checkbox
 
       var allBox = h("input", { type: "checkbox", class: "chk" });
       allBox.checked = allChecked;
 
       function syncDisabled() {
-        boxes.forEach(function (b) { b.disabled = allBox.checked; });
+        display.forEach(function (n) { byName[n].disabled = allBox.checked; });
       }
       allBox.addEventListener("change", syncDisabled);
 
+      function selectionNow() {
+        if (allBox.checked) return ["*"];
+        return display.filter(function (n) { return byName[n].checked; });
+      }
+
       var grid = h("div", { class: "iface-grid" });
-      if (!available.length) {
+      if (!display.length) {
         grid.appendChild(h("div", { class: "muted", style: "font-size:12.5px" },
           "No interfaces detected on this host. Use “All interfaces” below."));
       }
-      available.forEach(function (name) {
+      display.forEach(function (name) {
         var cb = h("input", { type: "checkbox", class: "chk" });
         cb.checked = !!chosen[name];
-        boxes.push(cb);
-        grid.appendChild(h("label", { class: "iface-item" }, cb, h("span", null, name)));
+        byName[name] = cb;
+        var extra = info.all.indexOf(name) === -1
+          ? h("span", { class: "muted" }, " (configured, not detected)") : null;
+        grid.appendChild(h("label", { class: "iface-item" }, cb, h("span", null, name, extra)));
       });
       syncDisabled();
+
+      // Toggle between the tidy physical-only view and the full list,
+      // carrying any unsaved ticks across the re-render.
+      var toggle = null;
+      if (info.physical.length && info.physical.length < info.all.length) {
+        toggle = h("button", { class: "btn btn-ghost btn-sm", style: "margin-top:10px" },
+          compact ? "Show all " + info.all.length + " interfaces" : "Show physical only");
+        toggle.addEventListener("click", function () {
+          renderListen(info, selectionNow(), compact);
+        });
+      }
 
       var saveBtn = h("button", { class: "btn btn-primary btn-sm" },
         "Save listen interfaces");
       saveBtn.addEventListener("click", function () {
-        var picked = allBox.checked
-          ? ["*"]
-          : available.filter(function (name, i) { return boxes[i].checked; });
+        var picked = selectionNow();
         if (!picked.length) { status.textContent = "Select at least one interface, or “All interfaces”."; return; }
         var label = saveBtn.textContent; saveBtn.disabled = true;
         saveBtn.innerHTML = '<span class="spin"></span>';
-        api.put("/system/listen/" + (version === 4 ? "dhcp4" : "dhcp6"), { interfaces: picked })
+        api.put("/system/listen/" + fam(version), { interfaces: picked })
           .then(function (res) {
             var where = res.saved_to ? " — saved to " + res.saved_to : "";
             window.toast.success("Now listening on: " + res.interfaces.join(", ") + where,
               "Listen interfaces");
-            renderListen(available, res.interfaces);
+            renderListen(info, res.interfaces, showAll);
           })
           .catch(function (e) {
             saveBtn.disabled = false; saveBtn.textContent = label;
@@ -209,6 +242,7 @@
             allBox, h("span", null, h("strong", null, "All interfaces"),
               " ", h("span", { class: "muted" }, "(listen on every NIC — “*”)"))),
           grid,
+          toggle,
           status,
           h("div", { class: "form-actions", style: "margin-top:14px" }, saveBtn),
           h("div", { class: "hint", style: "margin-top:8px" },

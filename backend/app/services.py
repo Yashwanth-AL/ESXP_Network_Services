@@ -18,14 +18,15 @@ ALLOWED_ACTIONS = {"start", "stop", "restart", "reload"}
 
 
 def list_interfaces() -> list[str]:
-    """Names of this host's network interfaces (for the listen-interface picker).
+    """Names of ALL of this host's network interfaces except loopback.
 
     The dashboard runs on the same box as Kea, so these are exactly the
-    interfaces Kea can bind to. Returns only real/physical interfaces (eth*, en*,
-    wlan*, vlan*, bond*, etc.) -- synthetic/virtual ones (docker, br-, veth-,
-    virbr, lo) are filtered out to keep the picker clean. If an operator needs
-    a non-standard interface, the text-input escape hatch in the UI lets them
-    enter it manually.
+    interfaces Kea can bind to. This list is the source of truth for
+    validating a listen-interface selection, so it must be COMPLETE --
+    filtering it here would make legitimate interfaces (bridges, bonds with
+    custom names, usb0, ...) impossible to configure. Cosmetic filtering for
+    the picker uses physical_interfaces() below instead. Loopback alone is
+    excluded: binding a DHCP server to it is never valid.
     """
     names: list[str] = []
     try:
@@ -37,25 +38,26 @@ def list_interfaces() -> list[str]:
             names = os.listdir("/sys/class/net")
         except OSError:
             names = []
+    return sorted({n for n in names if n and n != "lo"})
 
-    # Real device patterns: eth*, en*, wlan*, vlan*, bond*, tun*, tap*, wg*, etc.
-    # Exclude: loopback, docker, br-*, veth-*, virbr*, dummy, etc.
-    real_starts = ("eth", "en", "wlan", "vlan", "bond", "tun", "tap", "wg", "ppp", "lo")
-    synthetic = ("docker", "br-", "veth-", "virbr", "dummy", "sit")
 
-    result = []
+def physical_interfaces(names: list[str]) -> list[str]:
+    """The subset of ``names`` that are physical devices (NICs on a real bus).
+
+    Uses /sys/class/net/<if>/device, which exists only for interfaces backed
+    by hardware (PCI/USB/...) -- no fragile name-prefix lists. Virtual
+    interfaces (bridges, veth, docker, dummies) have no device link. Returns
+    [] when /sys is unavailable (non-Linux dev boxes); the UI then just shows
+    everything. Display-only: validation always uses the full list.
+    """
+    out = []
     for n in names:
-        if not n:
+        try:
+            if os.path.exists(f"/sys/class/net/{n}/device"):
+                out.append(n)
+        except OSError:
             continue
-        # Include if starts with a real pattern
-        if not any(n.startswith(p) for p in real_starts):
-            continue
-        # Exclude synthetic ones
-        if any(syn in n for syn in synthetic):
-            continue
-        result.append(n)
-
-    return sorted(set(result))
+    return out
 
 
 class ServiceError(Exception):

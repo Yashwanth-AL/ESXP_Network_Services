@@ -134,14 +134,18 @@ def validate_dns_servers(servers: list[str], version: int) -> list[str]:
 
 # --- Listen interfaces -------------------------------------------------------
 
-def validate_interfaces(requested: list[str], available: list[str]) -> list[str]:
+def validate_interfaces(requested: list[str], available: list[str],
+                        current: list[str] | None = None) -> list[str]:
     """Normalise a listen-interface selection.
 
     ``"*"`` means "all interfaces" and cannot be combined with specific names.
     When we could enumerate the host's interfaces, every requested name must be
     one of them (catching typos before Kea silently fails to bind); if we could
     not enumerate them (``available`` empty), names pass through and Kea's
-    config-test remains the backstop. At least one interface is required.
+    config-test remains the backstop. Names in ``current`` (the selection Kea
+    is already configured with) are always allowed, so a working config whose
+    interface is temporarily down/not enumerable can still be re-saved.
+    At least one interface is required.
     """
     clean, seen = [], set()
     for i in requested or []:
@@ -154,7 +158,8 @@ def validate_interfaces(requested: list[str], available: list[str]) -> list[str]
     if "*" in clean:
         return ["*"]
     if available:
+        allowed = set(available) | {c for c in (current or []) if c != "*"}
         for i in clean:
-            if i not in available:
+            if i not in allowed:
                 _fail(f"'{i}' is not a network interface on this host")
     return clean
