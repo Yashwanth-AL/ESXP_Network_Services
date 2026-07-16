@@ -1,6 +1,8 @@
 """Service control, server status, health, and audit-log surfacing."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import run_in_threadpool
 
@@ -24,8 +26,12 @@ async def status(user: str = Depends(current_user)):
     svc = await run_in_threadpool(services.service_status)
     ca_reachable = False
     kea_info: dict = {}
-    for name in ("dhcp4", "dhcp6"):
-        info = await kea_client.status_get(name)
+    # Query both daemons concurrently: each status_get is a Control Agent
+    # round-trip with a 15s timeout, and this endpoint is polled every 5s, so
+    # running them back-to-back would double the worst-case stall.
+    names = ("dhcp4", "dhcp6")
+    results = await asyncio.gather(*(kea_client.status_get(n) for n in names))
+    for name, info in zip(names, results):
         if info is not None:
             ca_reachable = True
             kea_info[name] = {

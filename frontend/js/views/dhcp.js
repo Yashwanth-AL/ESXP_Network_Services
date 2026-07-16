@@ -217,6 +217,20 @@
       if (!isNew) renderReservations();
     }
 
+    // The editor surfaces a single pool, but Kea allows several per subnet
+    // (pre-dashboard or hand-added ones are preserved on save). When more
+    // exist, say so -- otherwise the operator has no way to know the pool
+    // fields only cover the first one.
+    function multiPoolNote(s) {
+      if (!s || !(s.pool_count > 1)) return null;
+      var others = s.pool_count - 1;
+      var tail = others === 1 ? "the other pool is kept as-is when you save."
+        : "the other " + others + " pools are kept as-is when you save.";
+      return h("div", { class: "banner", style: "margin-top:14px" },
+        h("span", null, "This subnet has " + s.pool_count + " address pools in Kea. " +
+          "The fields above edit only the first pool; " + tail));
+    }
+
     // statusWrap shows the outcome of Verify (and of a failed/succeeded Save)
     // right next to the buttons that triggered it.
     function showStatus(statusWrap, ok, message) {
@@ -278,6 +292,7 @@
           field("Default gateway", gateway, { hint: "Optional (routers option)" }),
           field("DNS servers", dns, { hint: "Comma-separated" }),
           validD.el, renewD.el, rebindD.el),
+        multiPoolNote(s),
         errEl, statusWrap,
         saveBar(
           function (btn) { verifySubnet(read, validate, errEl, statusWrap, btn); },
@@ -324,6 +339,7 @@
           field("Pool end", poolEnd, { req: true }),
           field("DNS servers", dns, { hint: "Comma-separated", full: true }),
           prefD.el, validD.el, renewD.el, rebindD.el),
+        multiPoolNote(s),
         errEl, statusWrap,
         saveBar(
           function (btn) { verifySubnet(read, validate, errEl, statusWrap, btn); },
@@ -355,10 +371,11 @@
       var err = validate(payload);
       if (err) { errEl.textContent = err; return; }
       var isNew = state.mode === "new";
+      var version = state.version;
       btn.disabled = true; var label = btn.textContent; btn.innerHTML = '<span class="spin"></span>';
       var req = isNew
-        ? api.post(base(state.version) + "/subnets", payload)
-        : api.put(base(state.version) + "/subnets/" + state.selectedId, payload);
+        ? api.post(base(version) + "/subnets", payload)
+        : api.put(base(version) + "/subnets/" + state.selectedId, payload);
       req.then(function (created) {
         window.toast.success((isNew ? "Subnet created: " : "Subnet updated: ") + payload.subnet);
         var newId = created && created.id;
@@ -366,18 +383,25 @@
         // must still restore the button -- renderDetail() is what would normally
         // rebuild it, so without this the Save button stays spinning forever and
         // the only way out is to leave and re-enter the view.
-        return api.get(base(state.version) + "/subnets").then(function (rows) {
+        // The refresh joins the same stale-response sequence as loadSubnets():
+        // without the seq/version check, switching to the other family tab while
+        // this GET is in flight would repaint the old family's rows (and, on a
+        // create, select an id from the wrong family) once it lands.
+        var seq = ++reqSeq;
+        return api.get(base(version) + "/subnets").then(function (rows) {
+          if (seq !== reqSeq || version !== state.version) return;
           state.subnets = rows;
           if (isNew && newId != null) { state.mode = "edit"; state.selectedId = newId; }
           renderList(); renderDetail();
         }).catch(function (e) {
+          if (seq !== reqSeq || version !== state.version) return;
           btn.disabled = false; btn.textContent = label;
           window.toast.error("Saved, but the subnet list could not be refreshed: " + e.message,
-            "DHCPv" + state.version);
+            "DHCPv" + version);
         });
       }).catch(function (e) {
         errEl.textContent = e.message; btn.disabled = false; btn.textContent = label;
-        window.toast.error(e.message, "DHCPv" + state.version);
+        window.toast.error(e.message, "DHCPv" + version);
       });
     }
 

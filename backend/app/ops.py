@@ -25,8 +25,7 @@ async def apply_and_audit(service: str, config: dict, *, user: str, action: str,
     await audit.arecord(user, "config", action, "success", detail)
 
 
-async def wipe_subnet_leases(service: str, subnet_id: int, *, user: str,
-                             action: str) -> None:
+async def wipe_subnet_leases(service: str, subnet_id: int, *, user: str) -> None:
     """Best-effort removal of the leases belonging to a subnet being deleted.
 
     Subnet ids are allocated as ``max(existing) + 1``, so a deleted id is handed
@@ -34,12 +33,15 @@ async def wipe_subnet_leases(service: str, subnet_id: int, *, user: str,
     subnet inherits the old one's leases in Kea's lease database and allocation
     engine, even though it may be a completely different CIDR.
 
-    Failures are audited but never block the delete the operator asked for --
-    lease-wipe needs the lease_cmds hook, which may not be loaded.
+    Failures are audited under their OWN action (never the caller's
+    ``subnet.delete``) and never block the delete the operator asked for --
+    lease-wipe needs the lease_cmds hook, which may not be loaded. Recording it
+    as ``subnet.delete`` would log a FAILURE line for the very delete that in
+    fact succeeded, so the operator could not tell what actually happened.
     """
     wipe = kea_client.lease4_wipe if service == kea_client.DHCP4 else kea_client.lease6_wipe
     try:
         await wipe(subnet_id)
     except kea_client.KeaError as exc:
-        await audit.arecord(user, "config", action, "failure",
+        await audit.arecord(user, "lease", f"{service}.lease-wipe", "failure",
                             f"subnet {subnet_id} leases could not be wiped: {exc.message}")

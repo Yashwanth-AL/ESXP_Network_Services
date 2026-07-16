@@ -160,18 +160,24 @@ async def apply_config(service: str, config: dict[str, Any]) -> None:
         await config_write(service)
     except KeaError as exc:
         # The change is now live in the running server but could not be written
-        # to disk, so it will be lost on the next reload/restart. Kea's raw text
-        # here is just "Unable to open file ... for writing"; translate it into
-        # something the operator can act on.
-        raise KeaError(
-            "The change was applied to the running server but could NOT be saved "
-            "to disk, so it will be lost when Kea restarts. Kea cannot write to "
-            "its config directory. On Debian/Ubuntu this is the "
-            "ProtectSystem=strict sandbox on the Kea service -- run "
-            "install/repair-kea.sh (it adds ReadWritePaths=/etc/kea and fixes "
-            f"file ownership). Kea reported: {exc.message}",
-            result=exc.result,
+        # to disk, so it will be lost on the next reload/restart. Whatever the
+        # cause, the operator must know the change is applied-but-unpersisted.
+        prefix = (
+            "The change was applied to the running server but could NOT be "
+            "saved to disk, so it will be lost when Kea restarts. "
         )
+        # Only diagnose the sandbox when Kea actually reported the file-write
+        # failure. Other KeaErrors reach here too (Control Agent restarting,
+        # disk full, unsupported command) and pointing those at repair-kea.sh
+        # would be wrong -- its Kea restart discards the in-memory change.
+        if "unable to open" in exc.message.lower():
+            prefix += (
+                "Kea cannot write to its config directory. On Debian/Ubuntu "
+                "this is the ProtectSystem=strict sandbox on the Kea service "
+                "-- run install/repair-kea.sh (it adds ReadWritePaths=/etc/kea "
+                "and fixes file ownership). "
+            )
+        raise KeaError(prefix + f"Kea reported: {exc.message}", result=exc.result)
 
 
 # --- Status ------------------------------------------------------------------

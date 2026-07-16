@@ -37,6 +37,11 @@ source "${SCRIPT_DIR}/lib-kea.sh"
 [[ "${EUID}" -eq 0 ]] || die "Please run as root (sudo ./install/install.sh)."
 [[ -d "${SRC_ROOT}/backend" && -d "${SRC_ROOT}/frontend" ]] \
   || die "Cannot find backend/ and frontend/ next to the installer (run it from the cloned repo)."
+# deploy_app rm -rf's ${INSTALL_DIR}/backend etc. before copying the source in.
+# If the source IS the install dir (the installer is now shipped there), that
+# would delete its own input mid-copy. Send the operator to update.sh instead.
+[[ "${SRC_ROOT}" != "${INSTALL_DIR}" ]] \
+  || die "Run install.sh from a fresh clone, not the deployed copy. To upgrade an existing install use: sudo ${INSTALL_DIR}/install/update.sh"
 
 # --- 1. detect package manager ----------------------------------------------
 detect_pkg() {

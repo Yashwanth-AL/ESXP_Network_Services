@@ -49,9 +49,10 @@ cleanup() { rm -rf "${TMP}" "${BACKUP}"; }
 rollback() {
   [[ "${RESTORE_ON_ERR}" -eq 1 ]] || return 0
   warn "Update failed -- restoring the previous version…"
-  rm -rf "${INSTALL_DIR}/backend" "${INSTALL_DIR}/frontend"
+  rm -rf "${INSTALL_DIR}/backend" "${INSTALL_DIR}/frontend" "${INSTALL_DIR}/install"
   [[ -d "${BACKUP}/backend" ]]  && cp -a "${BACKUP}/backend"  "${INSTALL_DIR}/backend"
   [[ -d "${BACKUP}/frontend" ]] && cp -a "${BACKUP}/frontend" "${INSTALL_DIR}/frontend"
+  [[ -d "${BACKUP}/install" ]]  && cp -a "${BACKUP}/install"  "${INSTALL_DIR}/install"
   systemctl restart esxp-dashboard || true
   warn "Rolled back. The previous version is running again; nothing was updated."
 }
@@ -65,6 +66,7 @@ git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${TMP}" \
 log "Backing up the current version…"
 [[ -d "${INSTALL_DIR}/backend" ]]  && cp -a "${INSTALL_DIR}/backend"  "${BACKUP}/backend"
 [[ -d "${INSTALL_DIR}/frontend" ]] && cp -a "${INSTALL_DIR}/frontend" "${BACKUP}/frontend"
+[[ -d "${INSTALL_DIR}/install" ]]  && cp -a "${INSTALL_DIR}/install"  "${BACKUP}/install"
 
 log "Redeploying application source…"
 RESTORE_ON_ERR=1

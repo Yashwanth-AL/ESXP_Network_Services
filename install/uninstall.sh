@@ -25,9 +25,17 @@ warn() { echo -e "${c_y}[!]${c_0} $*"; }
 systemctl stop esxp-dashboard 2>/dev/null || true
 systemctl disable esxp-dashboard 2>/dev/null || true
 rm -f /etc/systemd/system/esxp-dashboard.service
+
+# Revert the systemd drop-ins install.sh added to the Kea units so they no
+# longer carry the dashboard's ReadWritePaths=/etc/kea override. The glob covers
+# both kea-dhcp4-server.service.d and kea-dhcp4.service.d naming. Kea keeps
+# running; the stricter packaged sandbox re-applies on its next restart.
+rm -f /etc/systemd/system/kea-dhcp[46]*.service.d/10-esxp-writable-conf.conf
+rmdir /etc/systemd/system/kea-dhcp[46]*.service.d 2>/dev/null || true
+
 systemctl daemon-reload 2>/dev/null || true
 rm -rf "${INSTALL_DIR}"
-ok "Removed dashboard app and service."
+ok "Removed dashboard app, service, and Kea unit drop-ins."
 
 if [[ "${PURGE}" == "--purge" ]]; then
   rm -rf "${ETC_DIR}" "${DATA_DIR}"

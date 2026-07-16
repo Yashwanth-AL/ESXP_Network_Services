@@ -49,25 +49,70 @@ detect_hooks_dir() {
 # reservations). Pass an empty hooks dir to remove the hook instead.
 inject_lease_hook() {                 # $1 = conf path, $2 = hooks dir ("" = remove)
   command -v python3 >/dev/null 2>&1 || { warn "python3 not available; cannot edit ${1} for the lease hook."; return 0; }
+  # Always exits 0: editing the hook is best-effort. Kea configs may carry
+  # comments (# // /* */), which strict json.load rejects -- if we let that
+  # abort the caller under `set -e`, the far more important config-write
+  # drop-in step would be skipped. On any parse trouble we warn and leave the
+  # file untouched instead.
   python3 - "$1" "$2" <<'PY'
-import json, os, sys
+import json, os, re, sys
+
 path, hooks_dir = sys.argv[1], sys.argv[2]
-with open(path) as fh:
-    cfg = json.load(fh)
-root = next(iter(cfg))                # "Dhcp4" / "Dhcp6"
-lib = os.path.join(hooks_dir, "libdhcp_lease_cmds.so") if hooks_dir else ""
-# Preserve any other hooks already configured; only manage lease_cmds.
-libs = [l for l in cfg[root].get("hooks-libraries", [])
-        if "libdhcp_lease_cmds.so" not in l.get("library", "")]
-if lib and os.path.exists(lib):
-    libs.append({"library": lib})
-if libs:
-    cfg[root]["hooks-libraries"] = libs
-else:
-    cfg[root].pop("hooks-libraries", None)
-with open(path, "w") as fh:
-    json.dump(cfg, fh, indent=4)
-    fh.write("\n")
+
+
+def strip_jsonc(text):
+    """Remove // # line and /* */ block comments that Kea tolerates, without
+    touching comment-like sequences inside strings."""
+    out, i, n = [], 0, len(text)
+    in_str = esc = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True; out.append(c); i += 1; continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            i = text.find("\n", i);  i = n if i == -1 else i;  continue
+        if c == "#":
+            i = text.find("\n", i);  i = n if i == -1 else i;  continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2);  i = n if end == -1 else end + 2;  continue
+        out.append(c); i += 1
+    return "".join(out)
+
+
+try:
+    with open(path) as fh:
+        raw = fh.read()
+    try:
+        cfg = json.loads(raw)
+    except json.JSONDecodeError:
+        cfg = json.loads(strip_jsonc(raw))
+    root = next(iter(cfg))            # "Dhcp4" / "Dhcp6"
+    lib = os.path.join(hooks_dir, "libdhcp_lease_cmds.so") if hooks_dir else ""
+    # Preserve any other hooks already configured; only manage lease_cmds.
+    libs = [l for l in cfg[root].get("hooks-libraries", [])
+            if "libdhcp_lease_cmds.so" not in l.get("library", "")]
+    if lib and os.path.exists(lib):
+        libs.append({"library": lib})
+    if libs:
+        cfg[root]["hooks-libraries"] = libs
+    else:
+        cfg[root].pop("hooks-libraries", None)
+    with open(path, "w") as fh:
+        json.dump(cfg, fh, indent=4)
+        fh.write("\n")
+except Exception as exc:  # noqa: BLE001 - best effort, must not abort the caller
+    sys.stderr.write(
+        f"[!] Could not update {path} for the lease hook ({exc}); left as-is.\n")
 PY
 }
 

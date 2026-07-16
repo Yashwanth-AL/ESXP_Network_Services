@@ -123,8 +123,7 @@ async def delete_subnet(subnet_id: int, user: str = Depends(current_user)):
         cidr = subnet.get("subnet", "")
         # Drop this subnet's leases before its id can be recycled by the next
         # subnet created (best-effort; never blocks the delete).
-        await ops.wipe_subnet_leases(SERVICE, subnet_id, user=user,
-                                     action="dhcp6.subnet.delete")
+        await ops.wipe_subnet_leases(SERVICE, subnet_id, user=user)
         subnets = kea_config.subnet_list(config, SERVICE)
         subnets[:] = [s for s in subnets if s.get("id") != subnet_id]
         await ops.apply_and_audit(SERVICE, config, user=user,

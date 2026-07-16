@@ -22,28 +22,32 @@ def _ensure_parent(path: str) -> None:
 
 
 def _restrict(path: str) -> None:
-    """Make a freshly created DB file owner-only.
+    """Make the DB and its WAL sidecars owner-only.
 
-    It holds PBKDF2 password hashes and the audit log; the default umask would
-    leave it readable by every local account. The installer also locks down the
-    parent directory -- this covers dev runs and any non-installer deployment.
+    dashboard.db -- and the ``-wal`` / ``-shm`` files SQLite creates in WAL mode
+    -- hold PBKDF2 password hashes and the audit log; the default umask would
+    leave them readable by every local account. The installer also locks down
+    the parent directory; this is defense-in-depth for dev runs and any
+    non-installer deployment. SQLite recreates the sidecars after a checkpoint,
+    so this runs on every connection (a chmod to the same mode is a cheap no-op)
+    rather than only at first creation, which would miss them.
     """
-    try:
-        os.chmod(path, 0o600)
-    except OSError:  # pragma: no cover - e.g. unsupported on some filesystems
-        pass
+    for p in (path, path + "-wal", path + "-shm"):
+        try:
+            os.chmod(p, 0o600)
+        except OSError:  # sidecar not present yet, or unsupported filesystem
+            pass
 
 
 @contextmanager
 def get_conn() -> Iterator[sqlite3.Connection]:
     _ensure_parent(settings.db_path)
-    is_new = not Path(settings.db_path).exists()
     conn = sqlite3.connect(settings.db_path, timeout=15)
-    if is_new:
-        _restrict(settings.db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    # After WAL is enabled the sidecars exist -- lock down all three.
+    _restrict(settings.db_path)
     try:
         yield conn
         conn.commit()
