@@ -99,23 +99,49 @@ rolls back to the version you were running.)
 
 ## If something isn't working
 
-- **A save says it couldn't be written to disk, or subnets disappear after a
-  refresh** → run:
-  ```bash
-  sudo ./install/repair-kea.sh
-  ```
-  This fixes the two most common Kea issues (letting Kea save its config, and
-  turning on the lease commands the **Active Leases** page needs). It's safe to
-  run more than once and won't touch your subnets.
+**First thing to try for almost any Kea problem** — this one script fixes the
+common packaging issues and is safe to run repeatedly (it never touches your
+subnets):
 
-- **The Active Leases page is empty or errors** → same fix as above
-  (`sudo ./install/repair-kea.sh`).
+```bash
+sudo ./install/repair-kea.sh
+```
+
+It handles all four traps that modern Kea packages set on Debian/Ubuntu:
+
+1. **The dashboard says "Kea unreachable" / the DHCPv4/DHCPv6 dots stay red.**
+   Usually the Control Agent isn't running because the packaged service refuses
+   to start without a `/etc/kea/kea-api-password` file (it gets *silently
+   skipped* — `systemctl status kea-ctrl-agent` shows "condition failed"). The
+   repair clears that condition so the agent starts with our no-auth,
+   localhost-only setup.
+2. **The Active Leases page is empty or errors, or a config change won't
+   forward.** AppArmor blocks the Control Agent from the Kea control sockets.
+   The repair adds the socket permission and reloads AppArmor.
+3. **A save says it couldn't be written to disk, or subnets disappear after a
+   refresh.** Kea's `ProtectSystem=strict` sandbox blocks config-write; the
+   repair whitelists `/etc/kea`.
+4. **Active Leases needs the lease commands hook** — the repair injects it.
+
+At the end it runs a live check against the Control Agent and tells you whether
+it answered.
 
 - **Check the services are running:**
   ```bash
   systemctl status esxp-dashboard
   systemctl status kea-dhcp4-server kea-dhcp6-server kea-ctrl-agent
   ```
+  A Control Agent that was skipped shows `Active: inactive (dead)` with a
+  `Condition:` line rather than `failed` — that's the api-password gate, and
+  `repair-kea.sh` clears it.
+
+- **Test the Control Agent directly:**
+  ```bash
+  curl -X POST http://127.0.0.1:8000/ -H 'Content-Type: application/json' \
+       -d '{"command":"list-commands","service":["dhcp4"]}'
+  ```
+  A JSON reply with `"result": 0` means the agent and the DHCPv4 socket are
+  both healthy.
 
 - **See the dashboard's own log:**
   ```bash

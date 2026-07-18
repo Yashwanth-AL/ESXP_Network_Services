@@ -127,6 +127,12 @@ EOF
   dhcp6_unit="$(detect_unit kea-dhcp6)"
   write_kea_conf_dropins "${dhcp4_unit}" "${dhcp6_unit}"
 
+  # Two packaging traps that otherwise leave the dashboard unable to reach Kea:
+  #   1. the CA unit's kea-api-password start condition (service silently skipped)
+  #   2. AppArmor denying the CA access to the /run/kea control sockets
+  ensure_ca_can_start kea-ctrl-agent
+  fix_kea_apparmor
+
   ok "Kea configuration written to ${KEA_CONF_DIR} (backups: *.bak-${ts})."
 }
 

@@ -135,3 +135,62 @@ EOF
   done
   systemctl daemon-reload >/dev/null 2>&1 || true
 }
+
+# Newer Kea packages (2.4+/2.6 on Debian/Ubuntu) ship the Control Agent unit
+# with a start condition on a non-empty /etc/kea/kea-api-password. Our CA config
+# uses no HTTP auth (it binds to 127.0.0.1 only), so that file is never present
+# and systemd SILENTLY SKIPS the service ("condition failed", not an error).
+# Reset the condition via a drop-in so the CA starts with our no-auth config.
+# We reset rather than create a password file so we never set an auth secret the
+# dashboard doesn't know. No-op unless the unit actually has the condition.
+ensure_ca_can_start() {               # $1 = ctrl-agent unit (default kea-ctrl-agent)
+  local unit="${1:-kea-ctrl-agent}" dir
+  systemctl cat "${unit}" >/dev/null 2>&1 || return 0
+  systemctl cat "${unit}" 2>/dev/null | grep -q 'kea-api-password' || return 0
+  dir="/etc/systemd/system/${unit}.service.d"
+  mkdir -p "${dir}"
+  cat > "${dir}/10-esxp-no-api-password.conf" <<'EOF'
+[Unit]
+# Added by ESXP Network Services. The packaged Control Agent unit refuses to
+# start unless /etc/kea/kea-api-password exists and is non-empty. Our CA config
+# uses no HTTP auth (localhost-only), so that file never exists and the service
+# is silently skipped. An empty value clears a condition list -- see
+# systemd.unit(5) -- so this resets the api-password gate for our no-auth setup.
+ConditionPathExists=
+ConditionFileNotEmpty=
+AssertPathExists=
+AssertFileNotEmpty=
+EOF
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  ok "Cleared the ${unit} api-password start condition (no-auth, localhost-only CA)."
+}
+
+# On AppArmor systems (Debian/Ubuntu) the packaged kea-ctrl-agent profile does
+# not permit rw on the DHCP control sockets under /run/kea, so the CA starts but
+# every command it forwards to dhcp4/dhcp6 is denied. The packaged profile ends
+# with `#include <local/usr.sbin.kea-ctrl-agent>`, so drop our socket rules into
+# that local override (never edit the packaged profile) and reload. No-op where
+# AppArmor or the profile is absent (e.g. SELinux distros).
+fix_kea_apparmor() {
+  local prof="/etc/apparmor.d/usr.sbin.kea-ctrl-agent"
+  local local_prof="/etc/apparmor.d/local/usr.sbin.kea-ctrl-agent"
+  command -v apparmor_parser >/dev/null 2>&1 || return 0
+  [[ -f "${prof}" ]] || return 0
+  mkdir -p /etc/apparmor.d/local
+  cat > "${local_prof}" <<'EOF'
+# Added by ESXP Network Services: allow the Kea Control Agent to reach the
+# DHCP4/DHCP6 UNIX control sockets that kea-dhcp{4,6}-server create in /run/kea.
+# Without this the CA is up but forwards nothing (AppArmor denies the socket).
+/run/kea/ r,
+/run/kea/** rw,
+EOF
+  chmod 0644 "${local_prof}"
+  if ! grep -q 'local/usr.sbin.kea-ctrl-agent' "${prof}"; then
+    warn "kea-ctrl-agent AppArmor profile does not include its local override; socket rules may need to be added manually."
+  fi
+  if apparmor_parser -r "${prof}" >/dev/null 2>&1; then
+    ok "AppArmor: allowed kea-ctrl-agent access to /run/kea control sockets."
+  else
+    warn "Could not reload the kea-ctrl-agent AppArmor profile (check 'aa-status')."
+  fi
+}

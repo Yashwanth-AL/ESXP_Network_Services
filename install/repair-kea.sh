@@ -52,10 +52,31 @@ done
 write_kea_conf_dropins "${dhcp4_unit}" "${dhcp6_unit}"
 ok "Installed systemd drop-ins allowing config-write to ${KEA_CONF_DIR}."
 
-# --- 3. restart Kea so both take effect -------------------------------------
+# --- 3. Control Agent reachability ------------------------------------------
+# The dashboard talks to Kea ONLY through the Control Agent. Two packaging traps
+# on modern Debian/Ubuntu keep it from working: the CA unit won't start without
+# /etc/kea/kea-api-password, and AppArmor blocks the CA from the DHCP sockets.
+ensure_ca_can_start kea-ctrl-agent
+fix_kea_apparmor
+
+# --- 4. restart Kea so everything takes effect ------------------------------
+# DHCP servers first so their control sockets exist before the CA connects.
 for unit in "${dhcp4_unit}" "${dhcp6_unit}" kea-ctrl-agent; do
+  systemctl enable "${unit}" >/dev/null 2>&1 || true
   systemctl restart "${unit}" || warn "Could not restart ${unit} -- check 'systemctl status ${unit}'."
 done
+
+# --- 5. verify the CA actually answers --------------------------------------
+if command -v curl >/dev/null 2>&1; then
+  sleep 1
+  if curl -fsS -m 5 -X POST http://127.0.0.1:8000/ \
+       -H 'Content-Type: application/json' \
+       -d '{"command":"list-commands","service":["dhcp4"]}' >/dev/null 2>&1; then
+    ok "Control Agent is answering on http://127.0.0.1:8000 for dhcp4."
+  else
+    warn "Control Agent did not answer yet. Check 'systemctl status kea-ctrl-agent' and 'journalctl -u kea-ctrl-agent -n 50'."
+  fi
+fi
 
 echo
 ok "Repair complete."

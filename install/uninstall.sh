@@ -33,6 +33,16 @@ rm -f /etc/systemd/system/esxp-dashboard.service
 rm -f /etc/systemd/system/kea-dhcp[46]*.service.d/10-esxp-writable-conf.conf
 rmdir /etc/systemd/system/kea-dhcp[46]*.service.d 2>/dev/null || true
 
+# Revert the Control Agent drop-in (api-password condition reset) and the
+# AppArmor socket-access override this install added.
+rm -f /etc/systemd/system/kea-ctrl-agent.service.d/10-esxp-no-api-password.conf
+rmdir /etc/systemd/system/kea-ctrl-agent.service.d 2>/dev/null || true
+if [[ -f /etc/apparmor.d/local/usr.sbin.kea-ctrl-agent ]]; then
+  rm -f /etc/apparmor.d/local/usr.sbin.kea-ctrl-agent
+  command -v apparmor_parser >/dev/null 2>&1 \
+    && apparmor_parser -r /etc/apparmor.d/usr.sbin.kea-ctrl-agent 2>/dev/null || true
+fi
+
 systemctl daemon-reload 2>/dev/null || true
 rm -rf "${INSTALL_DIR}"
 ok "Removed dashboard app, service, and Kea unit drop-ins."
