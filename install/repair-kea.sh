@@ -69,12 +69,56 @@ done
 # --- 5. verify the CA actually answers --------------------------------------
 if command -v curl >/dev/null 2>&1; then
   sleep 1
-  if curl -fsS -m 5 -X POST http://127.0.0.1:8000/ \
+  resp="$(curl -fsS -m 5 -X POST http://127.0.0.1:8000/ \
        -H 'Content-Type: application/json' \
-       -d '{"command":"list-commands","service":["dhcp4"]}' >/dev/null 2>&1; then
-    ok "Control Agent is answering on http://127.0.0.1:8000 for dhcp4."
+       -d '{"command":"list-commands","service":["dhcp4"]}' 2>/dev/null || true)"
+
+  # curl success only means HTTP transport is up; verify Kea command result too.
+  if [[ -n "${resp}" ]] && python3 - "${resp}" <<'PY' >/dev/null 2>&1
+import json, sys
+raw = sys.argv[1]
+try:
+    data = json.loads(raw)
+    if isinstance(data, list) and data and int(data[0].get("result", 1)) == 0:
+        raise SystemExit(0)
+except Exception:
+    pass
+raise SystemExit(1)
+PY
+  then
+    ok "Control Agent is answering on http://127.0.0.1:8000 for dhcp4 (result=0)."
   else
-    warn "Control Agent did not answer yet. Check 'systemctl status kea-ctrl-agent' and 'journalctl -u kea-ctrl-agent -n 50'."
+    warn "Control Agent is reachable but dhcp4 forward still failing."
+    if printf '%s' "${resp}" | grep -qi 'unable to forward command to the dhcp4 service: Permission denied'; then
+      warn "Detected AppArmor/socket mediation failure in kea-ctrl-agent; disabling only that profile as a fallback."
+      if command -v aa-disable >/dev/null 2>&1; then
+        aa-disable /etc/apparmor.d/usr.sbin.kea-ctrl-agent >/dev/null 2>&1 || true
+        systemctl restart kea-ctrl-agent || true
+        resp2="$(curl -fsS -m 5 -X POST http://127.0.0.1:8000/ \
+             -H 'Content-Type: application/json' \
+             -d '{"command":"list-commands","service":["dhcp4"]}' 2>/dev/null || true)"
+        if [[ -n "${resp2}" ]] && python3 - "${resp2}" <<'PY' >/dev/null 2>&1
+import json, sys
+raw = sys.argv[1]
+try:
+    data = json.loads(raw)
+    if isinstance(data, list) and data and int(data[0].get("result", 1)) == 0:
+        raise SystemExit(0)
+except Exception:
+    pass
+raise SystemExit(1)
+PY
+        then
+          ok "Fallback applied: kea-ctrl-agent profile disabled; dhcp4 forwarding now works."
+        else
+          warn "Fallback applied but dhcp4 forwarding is still failing; inspect journalctl -u kea-ctrl-agent and journalctl -k | grep -i apparmor."
+        fi
+      else
+        warn "aa-disable not found; manually set kea-ctrl-agent profile to complain/disabled and retry."
+      fi
+    else
+      warn "Control Agent did not answer correctly yet. Check 'systemctl status kea-ctrl-agent' and 'journalctl -u kea-ctrl-agent -n 80'."
+    fi
   fi
 fi
 

@@ -11,7 +11,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="/etc/esxp-network-services/.env"
+ENV_FILE="/etc/ESXP_Network_Services/.env"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Please run with sudo:  sudo ./run.sh" >&2

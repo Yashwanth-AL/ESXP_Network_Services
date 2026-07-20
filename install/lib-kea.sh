@@ -174,23 +174,70 @@ EOF
 fix_kea_apparmor() {
   local prof="/etc/apparmor.d/usr.sbin.kea-ctrl-agent"
   local local_prof="/etc/apparmor.d/local/usr.sbin.kea-ctrl-agent"
+  local dhcp4_prof="/etc/apparmor.d/usr.sbin.kea-dhcp4"
+  local dhcp6_prof="/etc/apparmor.d/usr.sbin.kea-dhcp6"
+  local dhcp4_local="/etc/apparmor.d/local/usr.sbin.kea-dhcp4"
+  local dhcp6_local="/etc/apparmor.d/local/usr.sbin.kea-dhcp6"
   command -v apparmor_parser >/dev/null 2>&1 || return 0
-  [[ -f "${prof}" ]] || return 0
+  [[ -f "${prof}" || -f "${dhcp4_prof}" || -f "${dhcp6_prof}" ]] || return 0
   mkdir -p /etc/apparmor.d/local
+
+  # Control Agent -> DHCP control sockets (/run/kea/*-ctrl-socket)
   cat > "${local_prof}" <<'EOF'
 # Added by ESXP Network Services: allow the Kea Control Agent to reach the
 # DHCP4/DHCP6 UNIX control sockets that kea-dhcp{4,6}-server create in /run/kea.
 # Without this the CA is up but forwards nothing (AppArmor denies the socket).
 /run/kea/ r,
+/run/kea/kea4-ctrl-socket rw,
+/run/kea/kea6-ctrl-socket rw,
+/run/kea/kea-ddns-ctrl-socket rw,
 /run/kea/** rw,
 EOF
   chmod 0644 "${local_prof}"
-  if ! grep -q 'local/usr.sbin.kea-ctrl-agent' "${prof}"; then
+  if [[ -f "${prof}" ]] && ! grep -q 'local/usr.sbin.kea-ctrl-agent' "${prof}"; then
     warn "kea-ctrl-agent AppArmor profile does not include its local override; socket rules may need to be added manually."
   fi
-  if apparmor_parser -r "${prof}" >/dev/null 2>&1; then
-    ok "AppArmor: allowed kea-ctrl-agent access to /run/kea control sockets."
-  else
-    warn "Could not reload the kea-ctrl-agent AppArmor profile (check 'aa-status')."
+
+  # DHCP daemons -> config-write target files in /etc/kea/*.conf
+  cat > "${dhcp4_local}" <<'EOF'
+# Added by ESXP Network Services: permit config-write to persist DHCPv4 config.
+/etc/kea/ r,
+/etc/kea/** rw,
+EOF
+  chmod 0644 "${dhcp4_local}"
+  if [[ -f "${dhcp4_prof}" ]] && ! grep -q 'local/usr.sbin.kea-dhcp4' "${dhcp4_prof}"; then
+    warn "kea-dhcp4 AppArmor profile does not include its local override; /etc/kea write rules may need to be added manually."
+  fi
+
+  cat > "${dhcp6_local}" <<'EOF'
+# Added by ESXP Network Services: permit config-write to persist DHCPv6 config.
+/etc/kea/ r,
+/etc/kea/** rw,
+EOF
+  chmod 0644 "${dhcp6_local}"
+  if [[ -f "${dhcp6_prof}" ]] && ! grep -q 'local/usr.sbin.kea-dhcp6' "${dhcp6_prof}"; then
+    warn "kea-dhcp6 AppArmor profile does not include its local override; /etc/kea write rules may need to be added manually."
+  fi
+
+  if [[ -f "${prof}" ]]; then
+    if apparmor_parser -r "${prof}" >/dev/null 2>&1; then
+      ok "AppArmor: allowed kea-ctrl-agent access to /run/kea control sockets."
+    else
+      warn "Could not reload the kea-ctrl-agent AppArmor profile (check 'aa-status')."
+    fi
+  fi
+  if [[ -f "${dhcp4_prof}" ]]; then
+    if apparmor_parser -r "${dhcp4_prof}" >/dev/null 2>&1; then
+      ok "AppArmor: allowed kea-dhcp4 config-write to /etc/kea."
+    else
+      warn "Could not reload the kea-dhcp4 AppArmor profile (config-write may still fail)."
+    fi
+  fi
+  if [[ -f "${dhcp6_prof}" ]]; then
+    if apparmor_parser -r "${dhcp6_prof}" >/dev/null 2>&1; then
+      ok "AppArmor: allowed kea-dhcp6 config-write to /etc/kea."
+    else
+      warn "Could not reload the kea-dhcp6 AppArmor profile (config-write may still fail)."
+    fi
   fi
 }
