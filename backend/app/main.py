@@ -71,8 +71,23 @@ app.include_router(system.router)
 
 # --- static frontend ---------------------------------------------------------
 
+class _RevalidatingStatic(StaticFiles):
+    """StaticFiles that asks the browser to revalidate before reusing a cached
+    asset. Plain StaticFiles sends ETag/Last-Modified but no Cache-Control, so
+    browsers apply heuristic caching and can serve a STALE dashboard.js/css for
+    a long time -- after an update (git pull + restart) the operator would keep
+    seeing the old UI until a hard refresh. ``no-cache`` means "check with the
+    server first"; nothing changed -> cheap 304, changed -> fresh 200.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 if settings.frontend_dir.is_dir():
-    app.mount("/", StaticFiles(directory=str(settings.frontend_dir), html=True), name="frontend")
+    app.mount("/", _RevalidatingStatic(directory=str(settings.frontend_dir), html=True), name="frontend")
 else:  # pragma: no cover - only in a misconfigured deployment
     @app.get("/")
     async def _missing_frontend():

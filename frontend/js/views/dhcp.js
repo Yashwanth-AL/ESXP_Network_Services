@@ -203,15 +203,14 @@
       // carrying any unsaved ticks across the re-render.
       var toggle = null;
       if (info.physical.length && info.physical.length < info.all.length) {
-        toggle = h("button", { class: "btn btn-ghost btn-sm", style: "margin-top:10px" },
+        toggle = h("button", { class: "btn btn-ghost btn-sm listen-toggle" },
           compact ? "Show all " + info.all.length + " interfaces" : "Show physical only");
         toggle.addEventListener("click", function () {
           renderListen(info, selectionNow(), compact);
         });
       }
 
-      var saveBtn = h("button", { class: "btn btn-primary btn-sm" },
-        "Save listen interfaces");
+      var saveBtn = h("button", { class: "btn btn-primary btn-sm" }, "Save");
       saveBtn.addEventListener("click", function () {
         var picked = selectionNow();
         if (!picked.length) { status.textContent = "Select at least one interface, or “All interfaces”."; return; }
@@ -231,22 +230,32 @@
           });
       });
 
+      // Small, muted info line (own inline SVG so it isn't forced to nav-icon's
+      // 18px). Explains that a save takes effect immediately.
+      var infoSvg = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" ' +
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/>' +
+        '<line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+      var note = h("div", { class: "listen-note" },
+        h("span", { class: "listen-note-ic", unsafeHTML: infoSvg }),
+        h("span", null, "Saved to Kea immediately. If the server doesn’t start using a new "
+          + "interface, restart it from Settings."));
+
       U.clear(listenWrap);
-      listenWrap.appendChild(h("div", { class: "card" },
+      listenWrap.appendChild(h("div", { class: "card listen-card" },
         h("div", { class: "card-head" },
           h("h3", null, "Listen interfaces"),
-          h("div", { class: "sub", style: "margin-left:auto" },
-            "Which NICs the DHCPv" + version + " server binds to")),
+          h("div", { class: "actions" }, saveBtn)),
         h("div", { class: "card-body" },
-          h("label", { class: "iface-item", style: "margin-bottom:8px" },
+          h("div", { class: "listen-sub" },
+            "Which NICs the DHCPv" + version + " server binds to"),
+          h("label", { class: "iface-item listen-all" },
             allBox, h("span", null, h("strong", null, "All interfaces"),
               " ", h("span", { class: "muted" }, "(listen on every NIC — “*”)"))),
           grid,
           toggle,
           status,
-          h("div", { class: "form-actions", style: "margin-top:14px" }, saveBtn),
-          h("div", { class: "hint", style: "margin-top:8px" },
-            "A change here is applied and saved to Kea's config. If the server does not pick up a new interface, restart it from Settings."))));
+          note)));
     }
 
     function loadSubnets() {
