@@ -49,6 +49,19 @@
       'stroke-linejoin="round">' + path + "</svg>";
   }
 
+  // A small ⓘ that reveals `text` on hover (or focus, for keyboard/touch): a
+  // tidy way to explain a field without cluttering the form with always-on
+  // hint text. `text` is a plain string, rendered via createTextNode -- safe.
+  function infoTip(text) {
+    var svg = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" ' +
+      'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/>' +
+      '<line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+    return h("span", { class: "infotip", tabindex: "0", role: "note", "aria-label": text },
+      h("span", { class: "infotip-ic", unsafeHTML: svg }),
+      h("span", { class: "infotip-bubble" }, text));
+  }
+
   // Format an ISO8601 timestamp (UTC) into a readable local string.
   function fmtTime(iso) {
     if (!iso) return "—";
@@ -91,8 +104,8 @@
   }
 
   window.U = {
-    h: h, clear: clear, icon: icon, fmtTime: fmtTime, fmtRelative: fmtRelative,
-    fmtDuration: fmtDuration, initials: initials
+    h: h, clear: clear, icon: icon, infoTip: infoTip, fmtTime: fmtTime,
+    fmtRelative: fmtRelative, fmtDuration: fmtDuration, initials: initials
   };
   window.h = h;
 

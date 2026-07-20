@@ -17,10 +17,12 @@
     return [(mask >>> 24) & 255, (mask >>> 16) & 255, (mask >>> 8) & 255, mask & 255].join(".");
   }
 
+  var infoTip = U.infoTip;   // ⓘ hover-explanation, shared with the modal form
+
   function field(label, input, opts) {
     opts = opts || {};
     return h("div", { class: "field" + (opts.full ? " full" : "") },
-      h("label", null, label + (opts.req ? " *" : "")),
+      h("label", null, label + (opts.req ? " *" : ""), opts.info ? infoTip(opts.info) : null),
       input,
       opts.hint ? h("div", { class: "hint" }, opts.hint) : null);
   }
@@ -62,7 +64,7 @@
       unitSelect.appendChild(opt);
     });
     var wrap = h("div", { class: "field" + (opts.full ? " full" : "") },
-      h("label", null, label + (opts.req ? " *" : "")),
+      h("label", null, label + (opts.req ? " *" : ""), opts.info ? infoTip(opts.info) : null),
       h("div", { class: "duration-row" }, amountInput, unitSelect),
       opts.hint ? h("div", { class: "hint" }, opts.hint) : null);
     return { el: wrap, getSeconds: function () { return toSeconds(amountInput.value, unitSelect.value); } };
@@ -399,9 +401,12 @@
       var poolEnd = h("input", { type: "text", value: s.pool_end || "", placeholder: "192.168.10.200" });
       var gateway = h("input", { type: "text", value: s.gateway || "", placeholder: "192.168.10.1" });
       var dns = h("input", { type: "text", value: (s.dns_servers || []).join(", "), placeholder: "8.8.8.8, 8.8.4.4" });
-      var validD = durationField("Valid lifetime", s.valid_lifetime != null ? s.valid_lifetime : 4000);
-      var renewD = durationField("Renew timer", s.renew_timer != null ? s.renew_timer : 1000);
-      var rebindD = durationField("Rebind timer", s.rebind_timer != null ? s.rebind_timer : 2000);
+      var validD = durationField("Valid lifetime", s.valid_lifetime != null ? s.valid_lifetime : 4000,
+        { info: "How long a client may keep its address before it must renew. After this, an un-renewed address can be handed to someone else." });
+      var renewD = durationField("Renew timer", s.renew_timer != null ? s.renew_timer : 1000,
+        { info: "When the client first checks back with this server to extend its lease (the DHCP “T1” timer). Usually about half the valid lifetime." });
+      var rebindD = durationField("Rebind timer", s.rebind_timer != null ? s.rebind_timer : 2000,
+        { info: "If renewing fails, when the client will ask any DHCP server to keep its address (the DHCP “T2” timer). Usually about 7/8 of the valid lifetime." });
       var errEl = h("div", { class: "err-text" });
       var statusWrap = h("div");
 
@@ -423,12 +428,18 @@
       var isNew = state.mode === "new";
       var el = h("div", null,
         h("div", { class: "form-grid" },
-          field("Subnet (CIDR)", subnet, { req: true }),
-          field("Subnet mask", netmask, { hint: "Derived from the prefix" }),
-          field("Pool start", poolStart, { req: true }),
-          field("Pool end", poolEnd, { req: true }),
-          field("Default gateway", gateway, { hint: "Optional (routers option)" }),
-          field("DNS servers", dns, { hint: "Comma-separated" }),
+          field("Subnet (CIDR)", subnet, { req: true,
+            info: "The address range this subnet serves, written as network/prefix. Example: 192.168.10.0/24 covers 192.168.10.1–254." }),
+          field("Subnet mask", netmask, {
+            info: "Filled in automatically from the CIDR prefix. /24 means 255.255.255.0 — it sets how many addresses the subnet holds." }),
+          field("Pool start", poolStart, { req: true,
+            info: "First address Kea gives out to devices. Keep fixed devices (gateway, servers) below this so they aren’t handed out." }),
+          field("Pool end", poolEnd, { req: true,
+            info: "Last address Kea gives out. Devices receive an address somewhere in the start–end range." }),
+          field("Default gateway", gateway, {
+            info: "The router devices use to reach other networks (the DHCP “routers” option). Usually the .1 of the subnet. Optional." }),
+          field("DNS servers", dns, {
+            info: "Name servers devices use to turn website/host names into addresses, e.g. 8.8.8.8. Separate several with commas." }),
           validD.el, renewD.el, rebindD.el),
         multiPoolNote(s),
         errEl, statusWrap,
@@ -445,10 +456,14 @@
       var poolStart = h("input", { type: "text", value: s.pool_start || "", placeholder: "2001:db8:1::1000" });
       var poolEnd = h("input", { type: "text", value: s.pool_end || "", placeholder: "2001:db8:1::ffff" });
       var dns = h("input", { type: "text", value: (s.dns_servers || []).join(", "), placeholder: "2001:4860:4860::8888" });
-      var prefD = durationField("Preferred lifetime", s.preferred_lifetime != null ? s.preferred_lifetime : 3000);
-      var validD = durationField("Valid lifetime", s.valid_lifetime != null ? s.valid_lifetime : 4000);
-      var renewD = durationField("Renew timer", s.renew_timer != null ? s.renew_timer : 1000);
-      var rebindD = durationField("Rebind timer", s.rebind_timer != null ? s.rebind_timer : 2000);
+      var prefD = durationField("Preferred lifetime", s.preferred_lifetime != null ? s.preferred_lifetime : 3000,
+        { info: "How long an IPv6 address stays “preferred” (fully usable). After it, the address still works but is “deprecated” — not used for new connections. Must not exceed the valid lifetime." });
+      var validD = durationField("Valid lifetime", s.valid_lifetime != null ? s.valid_lifetime : 4000,
+        { info: "How long a client may keep its IPv6 address before it must renew. After this, an un-renewed address can be handed to someone else." });
+      var renewD = durationField("Renew timer", s.renew_timer != null ? s.renew_timer : 1000,
+        { info: "When the client first checks back with this server to extend its lease (the DHCP “T1” timer). Usually about half the valid lifetime." });
+      var rebindD = durationField("Rebind timer", s.rebind_timer != null ? s.rebind_timer : 2000,
+        { info: "If renewing fails, when the client will ask any DHCP server to keep its address (the DHCP “T2” timer). Usually about 7/8 of the valid lifetime." });
       var errEl = h("div", { class: "err-text" });
       var statusWrap = h("div");
 
@@ -472,10 +487,14 @@
       var isNew = state.mode === "new";
       var el = h("div", null,
         h("div", { class: "form-grid" },
-          field("Subnet prefix (CIDR)", subnet, { req: true, full: true }),
-          field("Pool start", poolStart, { req: true }),
-          field("Pool end", poolEnd, { req: true }),
-          field("DNS servers", dns, { hint: "Comma-separated", full: true }),
+          field("Subnet prefix (CIDR)", subnet, { req: true, full: true,
+            info: "The IPv6 range this subnet serves, written as prefix/length. Example: 2001:db8:1::/64." }),
+          field("Pool start", poolStart, { req: true,
+            info: "First IPv6 address Kea gives out to devices in this subnet." }),
+          field("Pool end", poolEnd, { req: true,
+            info: "Last IPv6 address Kea gives out. Devices receive an address in the start–end range." }),
+          field("DNS servers", dns, { full: true,
+            info: "IPv6 name servers devices use to resolve host names, e.g. 2001:4860:4860::8888. Separate several with commas." }),
           prefD.el, validD.el, renewD.el, rebindD.el),
         multiPoolNote(s),
         errEl, statusWrap,
@@ -604,16 +623,20 @@
     function reservationModal(existing) {
       var v = state.version;
       var idField = v === 4
-        ? { name: "id", label: "MAC address", value: existing ? existing.mac : "", placeholder: "aa:bb:cc:dd:ee:ff", required: true }
-        : { name: "id", label: "DUID", value: existing ? existing.duid : "", placeholder: "00:01:00:01:...", required: true };
+        ? { name: "id", label: "MAC address", value: existing ? existing.mac : "", placeholder: "aa:bb:cc:dd:ee:ff", required: true,
+            info: "The device’s hardware (MAC) address — six hex pairs like aa:bb:cc:11:22:33. This is how Kea recognises the device to always give it the same IP." }
+        : { name: "id", label: "DUID", value: existing ? existing.duid : "", placeholder: "00:01:00:01:...", required: true,
+            info: "The client’s DHCPv6 Unique Identifier (DUID) — IPv6’s equivalent of a MAC address. Find it in the client’s DHCPv6 details." };
       window.openFormModal({
         title: (existing ? "Edit" : "Add") + " reservation",
         submitText: existing ? "Save" : "Add",
         fields: [
           idField,
           { name: "ip", label: "Reserved IP", value: existing ? existing.ip : "", required: true,
-            placeholder: v === 4 ? "192.168.10.20" : "2001:db8:1::20" },
-          { name: "hostname", label: "Hostname", value: existing ? existing.hostname : "", placeholder: "optional" }
+            placeholder: v === 4 ? "192.168.10.20" : "2001:db8:1::20",
+            info: "The fixed address this device always gets, instead of a random one from the pool. Must be inside this subnet." },
+          { name: "hostname", label: "Hostname", value: existing ? existing.hostname : "", placeholder: "optional",
+            info: "An optional friendly name recorded for this device (e.g. panel-01). Does not affect addressing." }
         ],
         onSubmit: function (vals) {
           var err = v === 4 ? V.mac(vals.id) : V.duid(vals.id);

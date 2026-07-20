@@ -59,7 +59,7 @@
     });
   };
 
-  // Generic form modal. fields: [{name,label,type,value,hint,placeholder,required,options}]
+  // Generic form modal. fields: [{name,label,type,value,hint,info,placeholder,required,options}]
   // onSubmit(values) may return a promise; throw to keep the modal open with an error.
   window.openFormModal = function (cfg) {
     var inputs = {};
@@ -80,7 +80,8 @@
       }
       inputs[f.name] = input;
       grid.appendChild(h("div", { class: "field" },
-        h("label", null, f.label + (f.required ? " *" : "")),
+        h("label", null, f.label + (f.required ? " *" : ""),
+          f.info ? window.U.infoTip(f.info) : null),
         input,
         f.hint ? h("div", { class: "hint" }, f.hint) : null));
     });
