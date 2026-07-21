@@ -262,19 +262,39 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 .duration-row input { flex: 1; min-width: 0; }
 .duration-row select { flex: none; width: 112px; }
 
-/* --- Listen-interface picker ------------------------------------------------- */
-.iface-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 14px; }
-.iface-item { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; user-select: none; }
-.iface-item .chk { flex: none; }
-.listen-sub { font-size: 12.5px; color: var(--text-muted); margin-bottom: 12px; }
-.listen-all { margin-bottom: 12px; }
-.listen-toggle { margin-top: 10px; }
-.listen-note {
-  display: flex; align-items: flex-start; gap: 7px; margin-top: 14px;
-  font-size: 11.5px; line-height: 1.5; color: var(--text-muted);
+/* --- Listen-interface picker (compact multi-select dropdown) ----------------- */
+.listen-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dropdown { position: relative; }
+.dropdown-toggle {
+  display: inline-flex; align-items: center; gap: 10px; justify-content: space-between;
+  min-width: 260px; max-width: 360px;
 }
-.listen-note-ic { flex: none; display: inline-flex; margin-top: 1px; color: var(--text-muted); }
-.listen-note-ic svg { display: block; }
+.dropdown-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown-caret { display: inline-flex; color: var(--text-muted); transition: transform .15s ease; }
+.dropdown.open .dropdown-caret { transform: rotate(180deg); }
+.dropdown-menu {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0;
+  min-width: 100%; width: max-content; max-width: 340px;
+  max-height: 320px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+  padding: 6px; display: none;
+}
+.dropdown.open .dropdown-menu { display: block; }
+.dropdown-item {
+  display: flex; align-items: center; gap: 9px; padding: 7px 8px;
+  border-radius: var(--radius-sm); font-size: 13.5px; cursor: pointer; user-select: none;
+}
+.dropdown-item:hover { background: var(--surface-2); }
+.dropdown-item .chk { flex: none; }
+.dropdown-sep { height: 1px; background: var(--border); margin: 5px 2px; }
+.dropdown-empty { padding: 8px; font-size: 12.5px; }
+.dropdown-more {
+  width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+  color: var(--se-green-dark); font: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 7px 8px; border-radius: var(--radius-sm);
+}
+.dropdown-more:hover { background: var(--surface-2); }
 
 /* --- Info tooltip (ⓘ beside a field label) ---------------------------------- */
 /* Field labels become a row so the ⓘ sits neatly after the text. */
@@ -287,19 +307,24 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 .infotip-ic { display: inline-flex; }
 .infotip-ic svg { display: block; }
 .infotip-bubble {
-  position: absolute; left: 50%; bottom: calc(100% + 9px);
+  position: absolute; left: 50%; bottom: calc(100% + 10px);
   transform: translateX(-50%) translateY(4px);
-  width: max-content; max-width: 240px; padding: 9px 11px;
-  background: #0f1720; color: #eaf1f6; border-radius: 7px;
-  font-size: 11.75px; font-weight: 400; line-height: 1.5;
+  width: max-content; max-width: 244px; padding: 9px 12px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong); border-left: 3px solid var(--se-green);
+  border-radius: var(--radius-sm);
+  font-size: 11.75px; font-weight: 400; line-height: 1.55;
   text-transform: none; letter-spacing: normal; white-space: normal; text-align: left;
-  box-shadow: 0 8px 24px rgba(6, 12, 20, .32);
+  box-shadow: var(--shadow-lg);
   opacity: 0; visibility: hidden; transition: opacity .13s ease, transform .13s ease;
   z-index: 2000; pointer-events: none;
 }
+/* Arrow: surface-filled with a hairline edge via drop-shadow, so it reads as
+   part of the bordered bubble instead of a floating dark triangle. */
 .infotip-bubble::after {
   content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-  border: 6px solid transparent; border-top-color: #0f1720;
+  border: 6px solid transparent; border-top-color: var(--surface);
+  filter: drop-shadow(0 1px 0 var(--border-strong));
 }
 .infotip:hover .infotip-bubble,
 .infotip:focus .infotip-bubble,
@@ -316,6 +341,26 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 .badge.red { background: #fdeaea; color: var(--danger-dark); }
 .badge.gray { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
 .badge.amber { background: #fef3e2; color: #a15c07; }
+
+/* --- Active-leases sections (connected / other) ----------------------------- */
+.lease-sections { display: flex; flex-direction: column; gap: 18px; }
+.lease-section .card-head h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.sec-count { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+.sec-sub { font-size: 12.5px; }
+.sec-dot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--border-strong); flex: none;
+}
+.sec-dot.green { background: var(--se-green); }
+.sec-dot.gray { background: var(--border-strong); }
+.sec-dot.live { box-shadow: 0 0 0 3px rgba(61, 205, 88, .18); margin-right: 7px; }
+@media (prefers-reduced-motion: no-preference) {
+  .sec-dot.live { animation: sec-pulse 2s ease-in-out infinite; }
+}
+@keyframes sec-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(61, 205, 88, .22); }
+  50% { box-shadow: 0 0 0 4px rgba(61, 205, 88, .10); }
+}
 
 /* --- Toolbar / search ------------------------------------------------------- */
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -343,24 +388,39 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 .modal-foot { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
 .modal .form-grid { grid-template-columns: 1fr; }
 
-/* --- Settings panels -------------------------------------------------------- */
-.panel-stack { display: flex; flex-direction: column; gap: 18px; }
-.card.accent-up { border-top: 3px solid var(--se-green); }
-.card.accent-down { border-top: 3px solid var(--danger); }
-.svc-title { display: flex; align-items: baseline; gap: 8px; }
-.svc-uptime { font-size: 12.5px; font-weight: 400; color: var(--text-muted); }
-.svc-controls {
-  display: flex;
-  align-items: center;
-  gap: 26px;
-  margin-top: 14px;
+/* --- Settings --------------------------------------------------------------- */
+.settings-stack { display: flex; flex-direction: column; gap: 18px; }
+
+/* Compact one-row-per-service control (replaces the old stack of big cards). */
+.svc-list { display: flex; flex-direction: column; }
+.svc-row {
+  display: flex; align-items: center; gap: 14px; padding: 12px 0;
+  border-bottom: 1px solid var(--border); flex-wrap: wrap;
 }
-.svc-group { display: flex; gap: 10px; flex: 1; }
-.svc-group .btn { flex: 1; }
-.svc-controls.single { justify-content: flex-start; margin-top: 4px; }
-.svc-controls.single .btn { min-width: 120px; }
-.kv { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
-.kv:last-child { border-bottom: none; margin-bottom: 6px; }
+.svc-row:first-child { padding-top: 0; }
+.svc-row:last-child { border-bottom: none; padding-bottom: 0; }
+.svc-name { font-weight: 600; font-size: 14px; min-width: 150px; display: flex; align-items: baseline; gap: 8px; }
+.svc-uptime { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.svc-status { min-width: 112px; }
+.svc-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+
+/* Diagnostics: label + Run button on one line, the backend answer below. */
+.diag-list { display: flex; flex-direction: column; }
+.check-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 9px 14px; align-items: center;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.check-row:first-child { padding-top: 0; }
+.check-row:last-child { border-bottom: none; padding-bottom: 0; }
+.check-label { font-size: 13.5px; font-weight: 500; }
+.check-result { grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; }
+.check-detail { color: var(--text-muted); align-self: center; }
+.diag-pre {
+  margin: 0; flex: 1; min-width: 0; overflow-x: auto;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; font-family: "Consolas", monospace; font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; color: var(--text);
+}
 .log-box {
   background: #10171d; color: #d6e2ea; border-radius: var(--radius);
   font-family: "Consolas", monospace; font-size: 12px; padding: 12px 14px;

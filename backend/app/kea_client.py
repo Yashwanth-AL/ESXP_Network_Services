@@ -192,6 +192,23 @@ async def status_get(service: str) -> dict[str, Any] | None:
         return None
 
 
+async def ca_version() -> str:
+    """Version reported by the Control Agent itself (no service). Raises on
+    transport failure, so a caller can use it as a reachability probe."""
+    args = await command("version-get")
+    return (args.get("extended") or args.get("text") or "").strip() or "unknown"
+
+
+async def list_commands(service: str) -> list[str]:
+    """Command names the given server currently supports (list-commands).
+
+    Used to tell whether an optional hook is loaded -- e.g. lease4-get-all only
+    appears when the lease_cmds hook library is present.
+    """
+    data = await command("list-commands", service)
+    return list(data) if isinstance(data, list) else []
+
+
 # --- Leases ------------------------------------------------------------------
 
 async def lease4_get_all() -> list[dict[str, Any]]:

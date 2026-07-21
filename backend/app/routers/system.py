@@ -8,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import audit, kea_client, kea_config, ops, services
 from ..auth import current_user
+from ..config import settings
 from ..models import InterfacesRequest
 from ..validation import validate_interfaces
 
@@ -98,6 +99,22 @@ async def get_listen(family: str, user: str = Depends(current_user)):
     return {"interfaces": kea_config.get_interfaces(config, service)}
 
 
+def _interfaces_in_file(path: str, interfaces: list[str]) -> bool | None:
+    """Best-effort: confirm the saved config file actually contains the
+    interface selection (answers "did it really reach the .conf?"). Returns
+    None if the file can't be read (path unknown / no permission)."""
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    if interfaces == ["*"]:
+        return '"*"' in text
+    return all(f'"{i}"' in text for i in interfaces)
+
+
 @router.put("/listen/{family}")
 async def set_listen(family: str, body: InterfacesRequest,
                      user: str = Depends(current_user)):
@@ -113,4 +130,86 @@ async def set_listen(family: str, body: InterfacesRequest,
         saved_to = await ops.apply_and_audit(
             service, config, user=user, action=f"{service}.interfaces.update",
             detail=", ".join(interfaces))
-    return {"interfaces": interfaces, "saved_to": saved_to}
+        # Read the running config straight back so the operator gets proof the
+        # change is really in effect, not just that the request was accepted.
+        after = await kea_client.config_get(service)
+        persisted = kea_config.get_interfaces(after, service)
+    confirmed = sorted(persisted) == sorted(interfaces)
+    in_file = await run_in_threadpool(_interfaces_in_file, saved_to, interfaces)
+    return {"interfaces": interfaces, "saved_to": saved_to,
+            "persisted": persisted, "confirmed": confirmed, "in_file": in_file}
+
+
+# --- troubleshooting probes --------------------------------------------------
+# Each check is its own endpoint returning {ok, title, detail} so the Settings
+# page can run them individually and show the raw backend answer next to each.
+
+_DHCP_PORT = {kea_client.DHCP4: 67, kea_client.DHCP6: 547}
+
+
+@router.get("/check/ca")
+async def check_ca(user: str = Depends(current_user)):
+    """Is the Kea Control Agent answering on its REST endpoint?"""
+    try:
+        version = await kea_client.ca_version()
+    except kea_client.KeaError as exc:
+        return {"ok": False, "title": "Control Agent",
+                "detail": f"Not reachable: {exc.message}"}
+    return {"ok": True, "title": "Control Agent",
+            "detail": f"Reachable at {settings.kea_ca_url}\n{version}"}
+
+
+@router.get("/check/socket/{family}")
+async def check_socket(family: str, user: str = Depends(current_user)):
+    """Is the DHCP server actually bound to its UDP port (67 v4 / 547 v6)?"""
+    service = _service(family)
+    port = _DHCP_PORT[service]
+    ok, detail = await run_in_threadpool(services.socket_listening, port)
+    return {"ok": ok, "title": f"{family} listening on UDP :{port}", "detail": detail}
+
+
+@router.get("/check/interfaces")
+async def check_interfaces(user: str = Depends(current_user)):
+    """The interfaces each server is really bound to, read from its live config.
+
+    This is the ground truth for "did my listen-interface change take effect?"
+    -- it reads Kea's running configuration, not what the UI last sent.
+    """
+    result: dict = {}
+    for service in (kea_client.DHCP4, kea_client.DHCP6):
+        try:
+            config = await kea_client.config_get(service)
+            result[service] = {"ok": True, "interfaces": kea_config.get_interfaces(config, service)}
+        except kea_client.KeaError as exc:
+            result[service] = {"ok": False, "error": exc.message}
+    return result
+
+
+@router.get("/check/leasehook/{family}")
+async def check_leasehook(family: str, user: str = Depends(current_user)):
+    """Is the lease_cmds hook loaded? (Active Leases needs lease{4,6}-get-all.)"""
+    service = _service(family)
+    needed = "lease4-get-all" if service == kea_client.DHCP4 else "lease6-get-all"
+    try:
+        commands = await kea_client.list_commands(service)
+    except kea_client.KeaError as exc:
+        return {"ok": False, "title": f"{family} lease hook", "detail": exc.message}
+    loaded = needed in commands
+    return {"ok": loaded, "title": f"{family} lease hook",
+            "detail": (f"lease_cmds hook is loaded ({needed} available)." if loaded
+                       else f"{needed} is not available -- the lease_cmds hook is "
+                            "not loaded, so Active Leases will be empty. Run "
+                            "install/repair-kea.sh to inject it.")}
+
+
+@router.get("/logs/{which}")
+async def service_logs(which: str, lines: int = 120, user: str = Depends(current_user)):
+    """Recent journal lines for a Kea unit (DHCPv4/DHCPv6/Control Agent)."""
+    if which not in ("dhcp4", "dhcp6", "ctrl_agent"):
+        raise HTTPException(status_code=400, detail=f"Unknown service '{which}'")
+    unit = settings.service_unit(which)
+    if not unit:
+        raise HTTPException(status_code=400, detail=f"No unit configured for '{which}'")
+    lines = max(20, min(lines, 500))
+    text = await run_in_threadpool(services.journal_tail, unit, lines)
+    return {"unit": unit, "lines": text}

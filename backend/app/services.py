@@ -11,10 +11,18 @@ import os
 import shutil
 import socket
 import subprocess
+import time
 
 from .config import settings
 
 ALLOWED_ACTIONS = {"start", "stop", "restart", "reload"}
+
+# Neighbour-table states that mean "the kernel has a live L2 mapping for this
+# host" -- i.e. the device answered ARP/NDP recently, so it is on the wire now.
+# STALE/FAILED/INCOMPLETE are deliberately excluded: after our ping nudge a
+# device that is actually present resolves to REACHABLE, so a still-STALE entry
+# means it did not answer.
+_LIVE_NEIGH = {"REACHABLE", "DELAY", "PROBE", "PERMANENT"}
 
 
 def list_interfaces() -> list[str]:
@@ -100,6 +108,106 @@ def service_status() -> dict[str, bool]:
         "dhcp6": is_active(settings.kea_dhcp6_service),
         "ctrl_agent": is_active(settings.kea_ctrl_agent_service),
     }
+
+
+# --- reachability (which leased devices are actually on the wire now) --------
+
+def _ping_sweep(ips: list[str], version: int) -> set[str]:
+    """Fire a short concurrent ping at each IP to force ARP/NDP resolution.
+
+    Returns the set that answered ICMP. Best-effort: the real signal is the
+    neighbour table afterwards (a device that answers ARP but filters ICMP
+    still shows REACHABLE), so failures here are fine.
+    """
+    ping = shutil.which("ping")
+    if not ping:
+        return set()
+    flag = "-6" if version == 6 else "-4"
+    responded: set[str] = set()
+    batch: list[tuple[str, subprocess.Popen]] = []
+
+    def reap(items):
+        deadline = time.time() + 3
+        for ip, proc in items:
+            try:
+                if proc.wait(timeout=max(0.05, deadline - time.time())) == 0:
+                    responded.add(ip)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    for ip in ips[:256]:                       # cap the fan-out
+        try:
+            proc = subprocess.Popen(
+                [ping, flag, "-c", "1", "-W", "1", "-n", ip],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            continue
+        batch.append((ip, proc))
+        if len(batch) >= 64:                   # bound concurrent processes
+            reap(batch); batch = []
+    reap(batch)
+    return responded
+
+
+def _neighbor_reachable(ips: set[str]) -> set[str]:
+    """IPs from ``ips`` that appear in the kernel neighbour table as live."""
+    ip_bin = shutil.which("ip")
+    if not ip_bin:
+        return set()
+    try:
+        proc = _run([ip_bin, "neigh", "show"], timeout=5)
+    except ServiceError:
+        return set()
+    out: set[str] = set()
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] in ips and parts[-1].upper() in _LIVE_NEIGH:
+            out.add(parts[0])
+    return out
+
+
+def connected_ips(ips: list[str], version: int = 4) -> set[str]:
+    """Best-effort set of leased IPs that are reachable on the network *now*.
+
+    Nudges ARP/NDP with a short ping sweep, then reads the neighbour table.
+    Returns an empty set when the tooling is unavailable (e.g. a non-Linux dev
+    box), which the UI treats as "reachability unknown".
+    """
+    ips = [i for i in ips if i]
+    if not ips:
+        return set()
+    responders = _ping_sweep(ips, version)
+    return responders | _neighbor_reachable(set(ips))
+
+
+# --- troubleshooting probes --------------------------------------------------
+
+def socket_listening(port: int) -> tuple[bool, str]:
+    """Whether any UDP socket is bound to ``port`` (DHCP: 67 v4 / 547 v6)."""
+    ss = shutil.which("ss")
+    if not ss:
+        return False, "'ss' not available on this host (iproute2 not installed)."
+    try:
+        proc = _run([ss, "-lunp"], timeout=5)
+    except ServiceError as exc:
+        return False, str(exc)
+    hits = [ln for ln in proc.stdout.splitlines() if f":{port} " in f"{ln} "]
+    if hits:
+        return True, "\n".join(hits[:6])
+    return False, f"Nothing is listening on UDP :{port}."
+
+
+def journal_tail(unit: str, lines: int = 120) -> str:
+    """Recent journal lines for a systemd unit (for the log viewer)."""
+    jc = shutil.which("journalctl")
+    if not jc:
+        return "journalctl not available on this host."
+    try:
+        proc = _run([jc, "-u", unit, "-n", str(lines), "--no-pager",
+                     "-o", "short-iso"], timeout=15)
+    except ServiceError as exc:
+        return str(exc)
+    return (proc.stdout or proc.stderr or "").strip() or "(no journal output)"
 
 
 def control(which: str, action: str) -> str:

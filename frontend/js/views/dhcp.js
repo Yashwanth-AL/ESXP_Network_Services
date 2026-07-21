@@ -129,6 +129,10 @@
 
     // --- listen interfaces (Kea interfaces-config for the current family) -----
     var ifaceInfo = null; // {all: [...], physical: [...]} -- host NICs don't change per family, fetch once per view
+    var listenDocClick = null; // outside-click handler for the open dropdown (swapped per render)
+    window.App.addCleanup(function () {
+      if (listenDocClick) document.removeEventListener("click", listenDocClick);
+    });
 
     function loadListen() {
       U.clear(listenWrap);
@@ -153,16 +157,16 @@
       });
     }
 
+    // A compact multi-select dropdown: one "Listen on […] ▾" control plus a
+    // Save button beside it. Physical NICs show by default; a "Show all" row
+    // inside the menu reveals the rest, and any currently-configured interface
+    // is always listed so an active binding can't be hidden and dropped.
     function renderListen(info, selected, showAll) {
       var version = state.version;
       var allChecked = selected.indexOf("*") !== -1;
       var chosen = {};
       selected.forEach(function (i) { if (i !== "*") chosen[i] = true; });
 
-      // Show physical NICs by default so the picker stays uncluttered; the
-      // toggle reveals everything (bridges, vlans, tunnels). Anything in the
-      // CURRENT selection is always shown regardless -- hiding an active
-      // binding here would silently drop it on the next save.
       var compact = !showAll && info.physical.length > 0;
       var display = (compact ? info.physical : info.all).slice();
       Object.keys(chosen).forEach(function (name) {
@@ -170,49 +174,76 @@
       });
       display.sort();
 
-      var status = h("div", { class: "err-text", style: "min-height:0" });
-      var byName = {}; // interface name -> its checkbox
-
+      var byName = {};
+      var status = h("div", { class: "err-text", style: "min-height:0;margin-top:10px" });
       var allBox = h("input", { type: "checkbox", class: "chk" });
       allBox.checked = allChecked;
 
-      function syncDisabled() {
-        display.forEach(function (n) { byName[n].disabled = allBox.checked; });
-      }
-      allBox.addEventListener("change", syncDisabled);
-
       function selectionNow() {
         if (allBox.checked) return ["*"];
-        return display.filter(function (n) { return byName[n].checked; });
+        // byName is populated as the menu is built; guard so an early call
+        // (computing the initial toggle label) doesn't deref an absent box.
+        return display.filter(function (n) { return byName[n] && byName[n].checked; });
       }
+      function summary() {
+        if (allBox.checked) return "All interfaces (*)";
+        var p = selectionNow();
+        if (!p.length) return "Select interfaces…";
+        return p.length <= 2 ? p.join(", ") : p.length + " interfaces selected";
+      }
+      function syncDisabled() { display.forEach(function (n) { byName[n].disabled = allBox.checked; }); }
 
-      var grid = h("div", { class: "iface-grid" });
+      var caret = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
+        + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+      var labelEl = h("span", { class: "dropdown-label" }, summary());
+      var toggleBtn = h("button", { class: "btn btn-outline dropdown-toggle", type: "button" },
+        labelEl, h("span", { class: "dropdown-caret", unsafeHTML: caret }));
+      function refresh() { labelEl.textContent = summary(); }
+
+      allBox.addEventListener("change", function () { syncDisabled(); refresh(); });
+
+      var menu = h("div", { class: "dropdown-menu" },
+        h("label", { class: "dropdown-item" },
+          allBox, h("span", null, "All interfaces ", h("span", { class: "muted" }, "(*)"))),
+        h("div", { class: "dropdown-sep" }));
+
       if (!display.length) {
-        grid.appendChild(h("div", { class: "muted", style: "font-size:12.5px" },
-          "No interfaces detected on this host. Use “All interfaces” below."));
+        menu.appendChild(h("div", { class: "dropdown-empty muted" }, "No interfaces detected on this host."));
       }
       display.forEach(function (name) {
         var cb = h("input", { type: "checkbox", class: "chk" });
         cb.checked = !!chosen[name];
+        cb.addEventListener("change", refresh);
         byName[name] = cb;
         var extra = info.all.indexOf(name) === -1
-          ? h("span", { class: "muted" }, " (configured, not detected)") : null;
-        grid.appendChild(h("label", { class: "iface-item" }, cb, h("span", null, name, extra)));
+          ? h("span", { class: "muted" }, " (configured)") : null;
+        menu.appendChild(h("label", { class: "dropdown-item" }, cb, h("span", null, name, extra)));
       });
       syncDisabled();
 
-      // Toggle between the tidy physical-only view and the full list,
-      // carrying any unsaved ticks across the re-render.
-      var toggle = null;
       if (info.physical.length && info.physical.length < info.all.length) {
-        toggle = h("button", { class: "btn btn-ghost btn-sm listen-toggle" },
-          compact ? "Show all " + info.all.length + " interfaces" : "Show physical only");
-        toggle.addEventListener("click", function () {
-          renderListen(info, selectionNow(), compact);
+        menu.appendChild(h("div", { class: "dropdown-sep" }));
+        var moreBtn = h("button", { class: "dropdown-more", type: "button" },
+          compact ? "Show all " + info.all.length + " interfaces" : "Show physical NICs only");
+        moreBtn.addEventListener("click", function (e) {
+          e.stopPropagation(); renderListen(info, selectionNow(), compact);
         });
+        menu.appendChild(moreBtn);
       }
 
-      var saveBtn = h("button", { class: "btn btn-primary btn-sm" }, "Save");
+      refresh();   // now that byName is populated, show the real selection summary
+
+      var dropdown = h("div", { class: "dropdown" }, toggleBtn, menu);
+      function setOpen(v) { dropdown.classList.toggle("open", v); }
+      toggleBtn.addEventListener("click", function (e) {
+        e.stopPropagation(); setOpen(!dropdown.classList.contains("open"));
+      });
+      // One outside-click handler at a time (renderListen re-runs on save/toggle).
+      if (listenDocClick) document.removeEventListener("click", listenDocClick);
+      listenDocClick = function (e) { if (!dropdown.contains(e.target)) setOpen(false); };
+      document.addEventListener("click", listenDocClick);
+
+      var saveBtn = h("button", { class: "btn btn-primary" }, "Save configuration");
       saveBtn.addEventListener("click", function () {
         var picked = selectionNow();
         if (!picked.length) { status.textContent = "Select at least one interface, or “All interfaces”."; return; }
@@ -220,9 +251,15 @@
         saveBtn.innerHTML = '<span class="spin"></span>';
         api.put("/system/listen/" + fam(version), { interfaces: picked })
           .then(function (res) {
-            var where = res.saved_to ? " — saved to " + res.saved_to : "";
-            window.toast.success("Now listening on: " + res.interfaces.join(", ") + where,
-              "Listen interfaces");
+            setOpen(false);
+            var msg = "Now listening on: " + res.interfaces.join(", ");
+            if (res.in_file === false) {
+              window.toast.error(msg + " — but it was NOT found in " + (res.saved_to || "the config file")
+                + ". See Settings → Diagnostics.", "Listen interfaces");
+            } else {
+              window.toast.success(msg + (res.saved_to ? " — saved to " + res.saved_to : ""),
+                "Listen interfaces");
+            }
             renderListen(info, res.interfaces, showAll);
           })
           .catch(function (e) {
@@ -232,32 +269,15 @@
           });
       });
 
-      // Small, muted info line (own inline SVG so it isn't forced to nav-icon's
-      // 18px). Explains that a save takes effect immediately.
-      var infoSvg = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" ' +
-        'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-        '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/>' +
-        '<line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
-      var note = h("div", { class: "listen-note" },
-        h("span", { class: "listen-note-ic", unsafeHTML: infoSvg }),
-        h("span", null, "Saved to Kea immediately. If the server doesn’t start using a new "
-          + "interface, restart it from Settings."));
-
       U.clear(listenWrap);
       listenWrap.appendChild(h("div", { class: "card listen-card" },
         h("div", { class: "card-head" },
           h("h3", null, "Listen interfaces"),
-          h("div", { class: "actions" }, saveBtn)),
+          infoTip("Which network ports the DHCPv" + version + " server binds to. "
+            + "Choose specific NICs, or “All interfaces”. Saved to Kea immediately.")),
         h("div", { class: "card-body" },
-          h("div", { class: "listen-sub" },
-            "Which NICs the DHCPv" + version + " server binds to"),
-          h("label", { class: "iface-item listen-all" },
-            allBox, h("span", null, h("strong", null, "All interfaces"),
-              " ", h("span", { class: "muted" }, "(listen on every NIC — “*”)"))),
-          grid,
-          toggle,
-          status,
-          note)));
+          h("div", { class: "listen-row" }, dropdown, saveBtn),
+          status)));
     }
 
     function loadSubnets() {

@@ -5,8 +5,9 @@ import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException
+from starlette.concurrency import run_in_threadpool
 
-from .. import audit, kea_client
+from .. import audit, kea_client, services
 from ..auth import current_user
 from ..validation import ValidationError, parse_address
 
@@ -59,16 +60,31 @@ def _format_v6(lease: dict) -> dict:
     }
 
 
+async def _with_reachability(rows: list[dict], version: int) -> list[dict]:
+    """Tag each lease with ``connected`` (reachable on the wire right now).
+
+    Probing shells out (ping + ip neigh), so it runs in a worker thread to keep
+    the event loop free. When probing is unavailable (non-Linux dev host) every
+    lease comes back ``connected: False`` and the UI simply shows them all under
+    "other leases".
+    """
+    ips = [r["ip"] for r in rows if r.get("ip")]
+    connected = await run_in_threadpool(services.connected_ips, ips, version)
+    for r in rows:
+        r["connected"] = r.get("ip") in connected
+    return rows
+
+
 @router.get("/v4")
 async def leases_v4(user: str = Depends(current_user)):
     leases = await kea_client.lease4_get_all()
-    return [_format_v4(l) for l in leases]
+    return await _with_reachability([_format_v4(l) for l in leases], 4)
 
 
 @router.get("/v6")
 async def leases_v6(user: str = Depends(current_user)):
     leases = await kea_client.lease6_get_all()
-    return [_format_v6(l) for l in leases]
+    return await _with_reachability([_format_v6(l) for l in leases], 6)
 
 
 # --- release -----------------------------------------------------------------
