@@ -86,14 +86,18 @@
         : h("span", { class: "check-detail" }, text);
     }
 
-    function diagRow(label, run) {
-      var btn = h("button", { class: "btn btn-outline btn-sm" }, "Run");
+    function diagRow(label, run, btnText) {
+      var btn = h("button", { class: "btn btn-outline btn-sm" }, btnText || "Run");
       var result = h("div", { class: "check-result" }, h("span", { class: "muted" }, "Not run yet"));
-      function show(ok, node) {
+      // status: true/"ok" -> green, false/"problem" -> red, "warn" -> amber.
+      function show(status, node) {
+        var s = status === true ? "ok" : status === false ? "problem" : status;
+        var cls = s === "ok" ? "up" : s === "warn" ? "warn" : "down";
+        var text = s === "ok" ? "OK" : s === "warn" ? "No traffic" : "Problem";
         U.clear(result);
-        result.appendChild(h("span", { class: "status-pill " + (ok ? "up" : "down") },
-          h("span", { class: "dot" }), ok ? "OK" : "Problem"));
-        result.appendChild(node);
+        result.appendChild(h("span", { class: "status-pill " + cls },
+          h("span", { class: "dot" }), text));
+        if (node) result.appendChild(node);
       }
       btn.onclick = function () {
         var label0 = btn.textContent; btn.disabled = true; btn.innerHTML = '<span class="spin spin-dark"></span>';
@@ -122,6 +126,67 @@
       }).catch(function (e) { show(false, detailNode(e.message)); }).then(done);
     }
 
+    // --- live packet capture: is DORA arriving, and from which device? -------
+    function capLabel(title, hint) {
+      return h("div", null, h("div", null, title),
+        h("div", { class: "check-hint" }, hint));
+    }
+
+    // Known message types, in exchange order, so the count pills read naturally.
+    var CAP_ORDER = ["Discover", "Offer", "Request", "Ack", "Nak", "Decline",
+      "Release", "Inform", "Solicit", "Advertise", "Reply", "Renew", "Rebind",
+      "Confirm", "Information-request"];
+
+    function captureNode(r) {
+      var wrap = h("div", { class: "cap-result" });
+      var counts = r.counts || {};
+      var keys = Object.keys(counts).sort(function (a, b) {
+        var ia = CAP_ORDER.indexOf(a), ib = CAP_ORDER.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      });
+      var summary = h("div", { class: "cap-counts" });
+      if (!keys.length) {
+        summary.appendChild(h("span", { class: "muted" },
+          "No DHCP packets seen on “" + r.interface + "” in " + r.seconds +
+          "s. If a device should be getting an address, reconnect it while the " +
+          "capture runs, or confirm it is on this interface."));
+      } else {
+        keys.forEach(function (k) {
+          summary.appendChild(h("span", { class: "cap-pill" }, k, h("b", null, "×" + counts[k])));
+        });
+      }
+      wrap.appendChild(summary);
+      if (r.packets && r.packets.length) {
+        var rows = r.packets.slice().reverse().map(function (p) {
+          var route = (p.src_ip || "—") + (p.dst_ip ? " → " + p.dst_ip : "");
+          return h("tr", null,
+            h("td", { class: "cap-ts" }, p.ts || ""),
+            h("td", null, h("span", { class: "cap-type" }, p.type)),
+            h("td", { class: "cap-mac" }, p.src_mac || "—"),
+            h("td", { class: "cap-route" }, route));
+        });
+        wrap.appendChild(h("div", { class: "cap-tablewrap" },
+          h("table", { class: "cap-table" },
+            h("thead", null, h("tr", null,
+              h("th", null, "Time"), h("th", null, "Message"),
+              h("th", null, "From (MAC)"), h("th", null, "Source → Destination"))),
+            h("tbody", null, rows))));
+      }
+      return wrap;
+    }
+
+    function captureCheck(family, seconds) {
+      return function (show, done) {
+        api.get("/system/check/dhcp-traffic/" + family + "?seconds=" + seconds)
+          .then(function (r) {
+            if (!r.ok) { show(false, detailNode(r.error || "Capture failed.")); return; }
+            show(r.total > 0 ? true : "warn", captureNode(r));
+          })
+          .catch(function (e) { show(false, detailNode(e.message)); })
+          .then(done);
+      };
+    }
+
     function diagnosticsCard() {
       return h("div", { class: "card" },
         h("div", { class: "card-head" }, h("h3", null, "Diagnostics"),
@@ -132,7 +197,13 @@
           diagRow("DHCPv6 listening on UDP :547", simpleCheck("/system/check/socket/dhcp6")),
           diagRow("Bound interfaces (from running config)", interfacesCheck),
           diagRow("DHCPv4 lease hook loaded", simpleCheck("/system/check/leasehook/dhcp4")),
-          diagRow("DHCPv6 lease hook loaded", simpleCheck("/system/check/leasehook/dhcp6"))));
+          diagRow("DHCPv6 lease hook loaded", simpleCheck("/system/check/leasehook/dhcp6")),
+          diagRow(capLabel("Capture live DHCPv4 exchange",
+                  "Sniffs ~12s for DISCOVER · OFFER · REQUEST · ACK and who sent them"),
+                  captureCheck("dhcp4", 12), "Capture"),
+          diagRow(capLabel("Capture live DHCPv6 exchange",
+                  "Sniffs ~12s for SOLICIT · ADVERTISE · REQUEST · REPLY"),
+                  captureCheck("dhcp6", 12), "Capture")));
     }
 
     // --- Kea service logs ----------------------------------------------------

@@ -8,6 +8,7 @@ internal server; see systemd/esxp-dashboard.service and the README).
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -208,6 +209,120 @@ def journal_tail(unit: str, lines: int = 120) -> str:
     except ServiceError as exc:
         return str(exc)
     return (proc.stdout or proc.stderr or "").strip() or "(no journal output)"
+
+
+# --- live DHCP packet capture (is DORA arriving, and from whom?) --------------
+# A short tcpdump sniff on the DHCP ports, parsed into a per-message summary.
+# Answers the operator's "are DISCOVER/OFFER/REQUEST/ACK actually reaching the
+# server, and from which device?" without them touching a terminal. Needs
+# tcpdump + CAP_NET_RAW (the dashboard runs as root on the target box).
+
+_TS_RE = re.compile(r"^(\d{2}:\d{2}:\d{2})\.\d+\s")
+_MAC_RE = re.compile(r"([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})")
+_IP4_PAIR_RE = re.compile(
+    r"(\d{1,3}(?:\.\d{1,3}){3})\.\d+\s*>\s*(\d{1,3}(?:\.\d{1,3}){3})\.\d+")
+# v4: BOOTP option 53 line, e.g. "DHCP-Message Option 53, length 1: Discover".
+_MSG4_RE = re.compile(r"DHCP-Message.*?:\s*([A-Za-z][A-Za-z-]*)")
+# v6: message name on the summary line, e.g. "dhcp6 solicit (xid=...)".
+_MSG6_RE = re.compile(r"\bdhcp6\s+([a-z][a-z-]*)")
+
+
+def _run_timed(cmd: list[str], seconds: int) -> tuple[str, str]:
+    """Run ``cmd`` for at most ``seconds`` and return (stdout, stderr) text.
+
+    A sniffer normally never exits on its own, so the timeout path is the
+    expected one: subprocess still hands back the output captured so far on the
+    TimeoutExpired exception (line-buffered via tcpdump's ``-l``).
+    """
+    def _dec(v) -> str:
+        if v is None:
+            return ""
+        return v if isinstance(v, str) else v.decode("utf-8", "replace")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=seconds, check=False)
+        return _dec(proc.stdout), _dec(proc.stderr)
+    except subprocess.TimeoutExpired as exc:
+        return _dec(exc.stdout), _dec(exc.stderr)
+    except (OSError, ValueError) as exc:
+        return "", str(exc)
+
+
+def _parse_dhcp_capture(out: str, family: int) -> list[dict]:
+    """Turn tcpdump's ``-e -n -v`` output into one record per DHCP packet."""
+    packets: list[dict] = []
+    cur: dict | None = None
+    for line in out.splitlines():
+        ts = _TS_RE.match(line)
+        if ts:
+            if cur is not None:
+                packets.append(cur)
+            cur = {"ts": ts.group(1), "type": "",
+                   "src_mac": "", "src_ip": "", "dst_ip": ""}
+            mac = _MAC_RE.search(line)          # first line carries the L2 src
+            if mac:
+                cur["src_mac"] = mac.group(1).lower()
+            if family == 6:
+                m6 = _MSG6_RE.search(line)      # v6 type is on the summary line
+                if m6:
+                    cur["type"] = m6.group(1).capitalize()
+        if cur is None:
+            continue
+        if not cur["src_ip"]:
+            pair = _IP4_PAIR_RE.search(line)
+            if pair:
+                cur["src_ip"], cur["dst_ip"] = pair.group(1), pair.group(2)
+        if family == 4 and not cur["type"]:
+            m4 = _MSG4_RE.search(line)          # v4 type is on an option line
+            if m4:
+                cur["type"] = m4.group(1)
+    if cur is not None:
+        packets.append(cur)
+    return [p for p in packets if p["type"]]    # drop anything unclassifiable
+
+
+def capture_dhcp(family: int = 4, iface: str | None = None,
+                 seconds: int = 12, max_packets: int = 200) -> dict:
+    """Sniff DHCP traffic briefly and summarise the exchange.
+
+    Returns ``{ok, interface, seconds, total, counts, packets}`` on success, or
+    ``{ok: False, error}`` when tcpdump is missing or the capture failed. Never
+    raises -- a diagnostic must degrade gracefully.
+    """
+    tcpdump = shutil.which("tcpdump")
+    if not tcpdump:
+        return {"ok": False,
+                "error": "tcpdump is not installed on this host, so live packet "
+                         "capture is unavailable. Install it with: "
+                         "apt-get install tcpdump"}
+    family = 6 if int(family) == 6 else 4
+    seconds = max(3, min(int(seconds), 30))
+    max_packets = max(10, min(int(max_packets), 500))
+    ports = "port 546 or port 547" if family == 6 else "port 67 or port 68"
+    cmd = [tcpdump, "-l", "-n", "-e", "-v", "-c", str(max_packets),
+           "-i", iface or "any", f"udp and ({ports})"]
+
+    out, err = _run_timed(cmd, seconds)
+    packets = _parse_dhcp_capture(out, family)
+    counts: dict[str, int] = {}
+    for p in packets:
+        counts[p["type"]] = counts.get(p["type"], 0) + 1
+
+    result = {
+        "ok": True, "family": family, "interface": iface or "any",
+        "seconds": seconds, "total": len(packets), "counts": counts,
+        "packets": packets[-40:],               # most recent, capped
+    }
+    if not packets:
+        low = (err or "").lower()
+        if "permission" in low or "not permitted" in low:
+            result["ok"] = False
+            result["error"] = ("tcpdump could not capture (needs root / "
+                               "CAP_NET_RAW): " + err.strip())
+        elif "no such device" in low or "syntax" in low or "couldn't" in low:
+            result["ok"] = False
+            result["error"] = err.strip()[:300] or "capture failed"
+    return result
 
 
 def control(which: str, action: str) -> str:

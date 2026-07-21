@@ -61,12 +61,12 @@ install_packages() {
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -y
       apt-get install -y kea-dhcp4-server kea-dhcp6-server kea-ctrl-agent \
-        python3 python3-venv python3-pip git curl openssl || \
-      apt-get install -y kea python3 python3-venv python3-pip git curl openssl
+        python3 python3-venv python3-pip git curl openssl tcpdump || \
+      apt-get install -y kea python3 python3-venv python3-pip git curl openssl tcpdump
       ;;
-    dnf) dnf install -y kea python3 python3-pip git curl openssl ;;
-    yum) yum install -y kea python3 python3-pip git curl openssl ;;
-    zypper) zypper --non-interactive install kea python3 python3-pip git curl openssl ;;
+    dnf) dnf install -y kea python3 python3-pip git curl openssl tcpdump ;;
+    yum) yum install -y kea python3 python3-pip git curl openssl tcpdump ;;
+    zypper) zypper --non-interactive install kea python3 python3-pip git curl openssl tcpdump ;;
     none) die "No supported package manager found. Install Kea + python3 manually, then re-run." ;;
   esac
   ok "Packages installed."

@@ -202,6 +202,27 @@ async def check_leasehook(family: str, user: str = Depends(current_user)):
                             "install/repair-kea.sh to inject it.")}
 
 
+@router.get("/check/dhcp-traffic/{family}")
+async def check_dhcp_traffic(family: str, seconds: int = 12,
+                            iface: str | None = None,
+                            user: str = Depends(current_user)):
+    """Sniff live DHCP packets and report which messages arrived and from whom.
+
+    Runs a short tcpdump on the DHCP ports and parses the exchange, so the
+    operator can see DISCOVER/OFFER/REQUEST/ACK (v4) or SOLICIT/ADVERTISE/
+    REQUEST/REPLY (v6) and the source of each -- the "is traffic even reaching
+    the server?" question, answered from the UI.
+    """
+    service = _service(family)                       # validates dhcp4/dhcp6
+    version = 6 if service == kea_client.DHCP6 else 4
+    seconds = max(3, min(seconds, 30))
+    if iface and iface != "any":
+        available = await run_in_threadpool(services.list_interfaces)
+        if iface not in available:
+            raise HTTPException(status_code=400, detail=f"Unknown interface '{iface}'")
+    return await run_in_threadpool(services.capture_dhcp, version, iface, seconds)
+
+
 @router.get("/logs/{which}")
 async def service_logs(which: str, lines: int = 120, user: str = Depends(current_user)):
     """Recent journal lines for a Kea unit (DHCPv4/DHCPv6/Control Agent)."""

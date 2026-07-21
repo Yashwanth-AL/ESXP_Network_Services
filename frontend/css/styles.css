@@ -421,6 +421,36 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
   padding: 8px 10px; font-family: "Consolas", monospace; font-size: 12px; line-height: 1.5;
   white-space: pre-wrap; color: var(--text);
 }
+.check-hint { font-size: 12px; font-weight: 400; color: var(--text-muted); margin-top: 3px; }
+
+/* tri-state pill: amber "no traffic" alongside the green/red up/down */
+.status-pill.warn { color: #a15c07; }
+.status-pill.warn .dot { background: var(--warn); box-shadow: 0 0 0 3px rgba(245,158,11,.18); }
+
+/* live DHCP capture result: count pills + a compact packet table */
+.cap-result { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.cap-counts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.cap-pill {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 20px;
+  background: var(--se-green-050); border: 1px solid #bfe8cb; color: #1c7a34;
+  font-size: 12px; font-weight: 500;
+}
+.cap-pill b { font-weight: 700; }
+.cap-tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.cap-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.cap-table th, .cap-table td { text-align: left; padding: 6px 10px; white-space: nowrap; }
+.cap-table thead th {
+  background: var(--surface-2); color: var(--text-muted); font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.cap-table tbody tr + tr td { border-top: 1px solid var(--border); }
+.cap-ts, .cap-mac, .cap-route { font-family: "Consolas", monospace; }
+.cap-ts, .cap-mac { color: var(--text-muted); }
+.cap-type {
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  font-weight: 600; font-size: 11.5px;
+}
 .log-box {
   background: #10171d; color: #d6e2ea; border-radius: var(--radius);
   font-family: "Consolas", monospace; font-size: 12px; padding: 12px 14px;
