@@ -38,13 +38,13 @@
     }
 
     function serviceAction(which, action, btn) {
-      var label = btn.textContent; btn.disabled = true; btn.innerHTML = '<span class="spin spin-dark"></span>';
+      var originalHTML = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spin spin-dark"></span>';
       api.post("/system/service/" + which + "/" + action).then(function (res) {
         window.toast.success(res.message || (which + " " + action + " ok"), "Service control");
       }).catch(function (e) {
         window.toast.error(e.message, "Service control");
       }).then(function () {
-        btn.disabled = false; btn.textContent = label;
+        btn.disabled = false; btn.innerHTML = originalHTML;
         refreshStatus(); loadHistory();
       });
     }
