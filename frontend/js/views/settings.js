@@ -55,7 +55,8 @@
       var uptime = h("span", { class: "svc-uptime" });
       svcRows[which] = { pill: pill, uptime: uptime };
       var btns = actions.map(function (a) {
-        var b = h("button", { class: "btn " + a[1] + " btn-sm" }, a[2]);
+        var cls = "btn btn-sm btn-action btn-" + a[0];
+        var b = h("button", { class: cls }, a[2]);
         b.onclick = function () { serviceAction(which, a[0], b); };
         return b;
       });
@@ -67,7 +68,7 @@
     }
 
     var FULL = [["start", "btn-primary", "Start"], ["stop", "btn-outline", "Stop"],
-                ["restart", "btn-outline", "Restart"], ["reload", "btn-outline", "Reload"]];
+                ["restart", "btn-outline", "Restart"]];
 
     function servicesCard() {
       return h("div", { class: "card" },
@@ -86,7 +87,7 @@
         : h("span", { class: "check-detail" }, text);
     }
 
-    function diagRow(label, run, btnText) {
+    function diagRow(label, run, btnText, desc) {
       var btn = h("button", { class: "btn btn-outline btn-sm" }, btnText || "Run");
       var result = h("div", { class: "check-result" }, h("span", { class: "muted" }, "Not run yet"));
       // status: true/"ok" -> green, false/"problem" -> red, "warn" -> amber.
@@ -103,7 +104,10 @@
         var label0 = btn.textContent; btn.disabled = true; btn.innerHTML = '<span class="spin spin-dark"></span>';
         run(show, function () { btn.disabled = false; btn.textContent = label0; });
       };
-      return h("div", { class: "check-row" }, h("div", { class: "check-label" }, label), btn, result);
+      var labelDiv = h("div", { class: "check-label-col" },
+        h("div", { class: "check-label" }, label));
+      if (desc) labelDiv.appendChild(h("div", { class: "check-desc" }, desc));
+      return h("div", { class: "check-row" }, labelDiv, btn, result);
     }
 
     function simpleCheck(path) {
@@ -190,20 +194,28 @@
     function diagnosticsCard() {
       return h("div", { class: "card" },
         h("div", { class: "card-head" }, h("h3", null, "Diagnostics"),
-          h("div", { class: "actions" }, h("span", { class: "muted sec-sub" }, "Run each check to see Kea's answer"))),
+          h("div", { class: "actions" }, h("span", { class: "muted sec-sub" }, "Run each check to verify Kea is healthy"))),
         h("div", { class: "card-body diag-list" },
-          diagRow("Control Agent reachable", simpleCheck("/system/check/ca")),
-          diagRow("DHCPv4 listening on UDP :67", simpleCheck("/system/check/socket/dhcp4")),
-          diagRow("DHCPv6 listening on UDP :547", simpleCheck("/system/check/socket/dhcp6")),
-          diagRow("Bound interfaces (from running config)", interfacesCheck),
-          diagRow("DHCPv4 lease hook loaded", simpleCheck("/system/check/leasehook/dhcp4")),
-          diagRow("DHCPv6 lease hook loaded", simpleCheck("/system/check/leasehook/dhcp6")),
+          diagRow("Control Agent reachable", simpleCheck("/system/check/ca"), "Run",
+            "Verifies the REST API at :8000 is responding. If Problem: check systemctl status kea-ctrl-agent or restart it."),
+          diagRow("DHCPv4 listening on UDP :67", simpleCheck("/system/check/socket/dhcp4"), "Run",
+            "Confirms DHCPv4 is bound to :67. If Problem: verify systemctl is-active kea-dhcp4-server and check for port conflicts."),
+          diagRow("DHCPv6 listening on UDP :547", simpleCheck("/system/check/socket/dhcp6"), "Run",
+            "Confirms DHCPv6 is bound to :547. If Problem: verify systemctl is-active kea-dhcp6-server and check for port conflicts."),
+          diagRow("Bound interfaces (from running config)", interfacesCheck, "Run",
+            "Shows which NICs are listening (from Kea's live config, not the .conf file). If (none), use Configuration tab to pick interfaces."),
+          diagRow("DHCPv4 lease hook loaded", simpleCheck("/system/check/leasehook/dhcp4"), "Run",
+            "Checks if lease_cmds hook is loaded (needed for Active Leases). If Problem: run sudo ./install/repair-kea.sh to inject it."),
+          diagRow("DHCPv6 lease hook loaded", simpleCheck("/system/check/leasehook/dhcp6"), "Run",
+            "Checks if lease_cmds hook is loaded (needed for Active Leases). If Problem: run sudo ./install/repair-kea.sh to inject it."),
           diagRow(capLabel("Capture live DHCPv4 exchange",
-                  "Sniffs ~12s for DISCOVER · OFFER · REQUEST · ACK and who sent them"),
-                  captureCheck("dhcp4", 12), "Capture"),
+                  "Sniffs ~12s for DISCOVER, OFFER, REQUEST, ACK and who sent them"),
+                  captureCheck("dhcp4", 12), "Capture",
+            "Captures live DHCP packets. If No traffic: reconnect a device while capture runs. If Problem: tcpdump may need sudo."),
           diagRow(capLabel("Capture live DHCPv6 exchange",
-                  "Sniffs ~12s for SOLICIT · ADVERTISE · REQUEST · REPLY"),
-                  captureCheck("dhcp6", 12), "Capture")));
+                  "Sniffs ~12s for SOLICIT, ADVERTISE, REQUEST, REPLY"),
+                  captureCheck("dhcp6", 12), "Capture",
+            "Captures live DHCP packets. If No traffic: reconnect a device while capture runs. If Problem: tcpdump may need sudo.")));
     }
 
     // --- Kea service logs ----------------------------------------------------

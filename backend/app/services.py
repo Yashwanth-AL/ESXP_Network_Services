@@ -285,7 +285,7 @@ def capture_dhcp(family: int = 4, iface: str | None = None,
                  seconds: int = 12, max_packets: int = 200) -> dict:
     """Sniff DHCP traffic briefly and summarise the exchange.
 
-    Returns ``{ok, interface, seconds, total, counts, packets}`` on success, or
+    Returns ``{ok, interface, seconds, total, counts, packets, raw_lines}`` on success, or
     ``{ok: False, error}`` when tcpdump is missing or the capture failed. Never
     raises -- a diagnostic must degrade gracefully.
     """
@@ -303,6 +303,7 @@ def capture_dhcp(family: int = 4, iface: str | None = None,
            "-i", iface or "any", f"udp and ({ports})"]
 
     out, err = _run_timed(cmd, seconds)
+    raw_lines = len(out.splitlines()) if out else 0
     packets = _parse_dhcp_capture(out, family)
     counts: dict[str, int] = {}
     for p in packets:
@@ -312,6 +313,7 @@ def capture_dhcp(family: int = 4, iface: str | None = None,
         "ok": True, "family": family, "interface": iface or "any",
         "seconds": seconds, "total": len(packets), "counts": counts,
         "packets": packets[-40:],               # most recent, capped
+        "raw_lines": raw_lines,                 # for debug: total tcpdump output lines
     }
     if not packets:
         low = (err or "").lower()
@@ -322,6 +324,10 @@ def capture_dhcp(family: int = 4, iface: str | None = None,
         elif "no such device" in low or "syntax" in low or "couldn't" in low:
             result["ok"] = False
             result["error"] = err.strip()[:300] or "capture failed"
+        elif raw_lines > 2:
+            # tcpdump captured output but parser found no DHCP messages.
+            # This could indicate a regex mismatch or different tcpdump format.
+            result["debug"] = f"tcpdump output {raw_lines} lines but no DHCP messages matched. Check format."
     return result
 
 
