@@ -49,15 +49,24 @@
       });
     }
 
-    // --- one compact row per service (name · status · actions) ---------------
+    // --- one row per service (name · status · actions) -----------------------
+    var ACTION_ICONS = {
+      start: '<polygon points="5 3 19 12 5 21 5 3"/>',
+      stop: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
+      restart: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>' +
+        '<path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>'
+    };
+
     function svcRow(which, title, actions) {
       var pill = h("span");
       var uptime = h("span", { class: "svc-uptime" });
       svcRows[which] = { pill: pill, uptime: uptime };
       var btns = actions.map(function (a) {
-        var cls = "btn btn-sm btn-action btn-" + a[0];
-        var b = h("button", { class: cls }, a[2]);
-        b.onclick = function () { serviceAction(which, a[0], b); };
+        var actionType = a[0];
+        var cls = "btn btn-action btn-" + actionType;
+        var ic = h("span", { class: "btn-action-icon", unsafeHTML: U.icon(ACTION_ICONS[actionType], 15) });
+        var b = h("button", { class: cls }, ic, a[2]);
+        b.onclick = function () { serviceAction(which, actionType, b); };
         return b;
       });
       updateSvcRow(which);

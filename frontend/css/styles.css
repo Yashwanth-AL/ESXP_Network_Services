@@ -391,27 +391,35 @@ table.data td.mono, .mono { font-family: "Consolas", "SF Mono", Menlo, monospace
 /* --- Settings --------------------------------------------------------------- */
 .settings-stack { display: flex; flex-direction: column; gap: 18px; }
 
-/* Compact one-row-per-service control (replaces the old stack of big cards). */
+/* One row per service (replaces the old stack of big cards). */
 .svc-list { display: flex; flex-direction: column; }
 .svc-row {
-  display: flex; align-items: center; gap: 12px; padding: 12px 0;
-  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 16px; padding: 14px 0;
+  border-bottom: 1px solid var(--border); flex-wrap: wrap;
 }
 .svc-row:first-child { padding-top: 0; }
 .svc-row:last-child { border-bottom: none; padding-bottom: 0; }
 .svc-name { font-weight: 600; font-size: 14px; min-width: 140px; display: flex; align-items: baseline; gap: 8px; }
 .svc-uptime { font-size: 12px; font-weight: 400; color: var(--text-muted); }
 .svc-status { min-width: 90px; }
-.svc-actions { display: flex; gap: 5px; margin-left: auto; }
+.svc-actions { display: flex; gap: 10px; margin-left: auto; flex-wrap: wrap; }
 
-/* Service action buttons: compact symbols with semantic colors. */
-.btn-action { padding: 5px 10px; font-size: 12px; font-weight: 500; min-width: auto; }
-.btn-action.btn-start { background: var(--se-green); border: 1px solid var(--se-green-dark); color: #fff; }
-.btn-action.btn-start:hover { background: var(--se-green-dark); }
-.btn-action.btn-stop { background: var(--danger); border: 1px solid var(--danger-dark); color: #fff; }
-.btn-action.btn-stop:hover { background: var(--danger-dark); }
-.btn-action.btn-restart { background: var(--warn); border: 1px solid #d97706; color: #000; }
-.btn-action.btn-restart:hover { background: #d97706; }
+/* Service action buttons: icon + label, color carried by text/border (not a
+   filled background), wide but shallow so they fill the row without bulk. */
+.btn-action {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 20px; font-size: 13px; font-weight: 600; min-width: 100px;
+  justify-content: center; border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--border-strong);
+}
+.btn-action-icon { display: inline-flex; }
+.btn-action-icon svg { width: 14px; height: 14px; }
+.btn-action.btn-start { color: var(--se-green-dark); border-color: #b7e8c2; }
+.btn-action.btn-start:hover { background: var(--se-green-050); border-color: var(--se-green); }
+.btn-action.btn-stop { color: var(--danger-dark); border-color: #f3bcbc; }
+.btn-action.btn-stop:hover { background: #fdecec; border-color: var(--danger); }
+.btn-action.btn-restart { color: #9a5b06; border-color: #f6d599; }
+.btn-action.btn-restart:hover { background: #fef3e0; border-color: var(--warn); }
 
 /* Diagnostics: label + Run button on one line, the backend answer below. */
 .diag-list { display: flex; flex-direction: column; }
